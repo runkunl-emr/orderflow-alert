@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>订单流面板</title>
+<style>
+  :root {
+    --bg: #131722; --line: #2a2e39; --grid: #1c2030; --text: #d1d4dc; --muted: #787b86;
+    --up: #26a69a; --down: #ef5350; --band: #f5a623; --cum: #2962ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); display: flex; flex-direction: column;
+         font: 13px -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 8px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 14px; font-weight: 600; margin: 0; }
+  #status { color: var(--muted); }
+  #status.ok { color: var(--up); }
+  .legend { color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  main { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); min-height: 0; }
+  .pane { background: var(--bg); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .stats { display: flex; gap: 14px; padding: 6px 10px; align-items: baseline; flex-wrap: wrap; border-bottom: 1px solid var(--grid); }
+  .sym { font-weight: 700; font-size: 15px; }
+  .num { font-variant-numeric: tabular-nums; }
+  .px { font-size: 15px; }
+  .k { color: var(--muted); }
+  .pos { color: var(--up); } .neg { color: var(--down); }
+  .bandtxt { color: var(--band); }
+  .chart { position: relative; flex: 1; min-height: 0; }
+  .chart canvas.profile { position: absolute; top: 0; pointer-events: none; z-index: 3; }
+  #log { height: 110px; overflow: auto; padding: 6px 14px; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  #log div { padding: 2px 0; }
+  #log .t { color: var(--muted); margin-right: 10px; }
+  #log .empty { color: var(--muted); }
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; }
+    .pane { height: 75vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>订单流面板</h1>
+  <span id="status">连接中…</span>
+  <span class="legend">
+    <span><span class="sw" style="background:var(--up)"></span>delta 正（上涨成交量多）</span>
+    <span><span class="sw" style="background:var(--down)"></span>delta 负</span>
+    <span><span class="sw" style="background:var(--cum)"></span>累计 delta</span>
+    <span><span class="sw" style="background:var(--band)"></span>单印区</span>
+    <span><span class="sw" style="background:rgba(120,123,134,.6)"></span>只走过一次的价位</span>
+  </span>
+</header>
+<main id="main"></main>
+<div id="log"><div class="empty">单印区出现或回补时会记在这里（同时弹 macOS 通知）。</div></div>
+
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+const panes = {};
+const order = ["@MNQ", "@MES"];
+
+function signed(n) { return (n > 0 ? "+" : "") + n.toLocaleString(); }
+function cls(n) { return n > 0 ? "pos" : n < 0 ? "neg" : ""; }
+
+function pane(sym) {
+  if (panes[sym]) return panes[sym];
+  const el = document.createElement("section");
+  el.className = "pane";
+  el.style.order = order.indexOf(sym) < 0 ? 9 : order.indexOf(sym);
+  el.innerHTML = `
+    <div class="stats">
+      <span class="sym">${sym.replace("@", "")}</span>
+      <span class="px num">–</span>
+      <span><span class="k">本分钟 delta </span><span class="num d">–</span></span>
+      <span><span class="k">累计 delta </span><span class="num cd">–</span></span>
+      <span class="bandtxt"></span>
+    </div>
+    <div class="chart"></div>`;
+  document.getElementById("main").appendChild(el);
+  const box = el.querySelector(".chart");
+  const chart = LightweightCharts.createChart(box, {
+    width: box.clientWidth, height: box.clientHeight,
+    layout: { background: { color: "#131722" }, textColor: "#d1d4dc" },
+    grid: { vertLines: { color: "#1c2030" }, horzLines: { color: "#1c2030" } },
+    timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 6, borderColor: "#2a2e39" },
+    rightPriceScale: { borderColor: "#2a2e39", scaleMargins: { top: 0.04, bottom: 0.36 } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  });
+  const candles = chart.addCandlestickSeries({
+    upColor: "#26a69a", downColor: "#ef5350", borderVisible: false, wickUpColor: "#26a69a", wickDownColor: "#ef5350",
+  });
+  const delta = chart.addHistogramSeries({ priceScaleId: "delta", priceLineVisible: false, lastValueVisible: false });
+  chart.priceScale("delta").applyOptions({ scaleMargins: { top: 0.68, bottom: 0.17 } });
+  const cum = chart.addLineSeries({ priceScaleId: "cum", color: "#2962ff", lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+  chart.priceScale("cum").applyOptions({ scaleMargins: { top: 0.85, bottom: 0.01 } });
+  const cv = document.createElement("canvas");
+  cv.className = "profile";
+  box.appendChild(cv);
+  new ResizeObserver(() => chart.resize(box.clientWidth, box.clientHeight)).observe(box);
+  const p = { sym, el, box, chart, candles, delta, cum, cv, bars: new Map(), bin: 0, band: null, lines: [] };
+  panes[sym] = p;
+  return p;
+}
+
+function reset(p) {
+  p.bars.clear();
+  p.candles.setData([]); p.delta.setData([]); p.cum.setData([]);
+  setBand(p, null);
+}
+
+const candle = (b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close });
+const deltaBar = (b) => ({ time: b.time, value: b.delta, color: b.delta >= 0 ? "rgba(38,166,154,.8)" : "rgba(239,83,80,.8)" });
+
+function onBar(p, m) {
+  const last = p.bars.size ? Math.max(...p.bars.keys()) : -Infinity;
+  p.bars.set(m.time, m);
+  if (m.time < last) {  // an older bar again (the stream reconnected and backfilled): redraw everything
+    const all = [...p.bars.values()].sort((a, b) => a.time - b.time);
+    let run = 0;
+    p.candles.setData(all.map(candle));
+    p.delta.setData(all.map(deltaBar));
+    p.cum.setData(all.map((b) => ({ time: b.time, value: (run += b.delta) })));
+    return;
+  }
+  p.candles.update(candle(m));
+  p.delta.update(deltaBar(m));
+  let total = 0;
+  for (const b of p.bars.values()) if (b.time <= m.time) total += b.delta;
+  p.cum.update({ time: m.time, value: total });
+  p.el.querySelector(".px").textContent = m.close.toLocaleString(undefined, { minimumFractionDigits: 2 });
+  const d = p.el.querySelector(".d"); d.textContent = signed(m.delta); d.className = "num d " + cls(m.delta);
+  const cd = p.el.querySelector(".cd"); cd.textContent = signed(total); cd.className = "num cd " + cls(total);
+}
+
+function setBand(p, band) {
+  for (const l of p.lines) p.candles.removePriceLine(l);
+  p.lines = [];
+  p.band = band;
+  p.el.querySelector(".bandtxt").textContent = band ? `单印区 ${band.low}–${band.high}` : "";
+  if (!band) return;
+  for (const [price, title] of [[band.high, "单印区上沿"], [band.low, "单印区下沿"]]) {
+    p.lines.push(p.candles.createPriceLine({ price, color: "#f5a623", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title }));
+  }
+}
+
+// 30-minute market profile on the right edge of the price pane, aligned to the price scale
+function drawProfile(p) {
+  const w = p.box.clientWidth, h = p.box.clientHeight, dpr = window.devicePixelRatio || 1;
+  const pw = Math.min(110, Math.max(50, w * 0.14));
+  const axis = p.chart.priceScale("right").width();
+  p.cv.width = pw * dpr; p.cv.height = h * dpr;
+  p.cv.style.width = pw + "px"; p.cv.style.height = h + "px"; p.cv.style.left = (w - axis - pw) + "px";
+  const ctx = p.cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, pw, h);
+  if (!p.bars.size || !p.bin) return;
+  const periods = new Map();
+  for (const b of p.bars.values()) {
+    const k = Math.floor(b.minute / 30), r = periods.get(k) || [Infinity, -Infinity];
+    periods.set(k, [Math.min(r[0], b.low), Math.max(r[1], b.high)]);
+  }
+  let lo = Infinity, hi = -Infinity;
+  for (const [a, z] of periods.values()) { lo = Math.min(lo, a); hi = Math.max(hi, z); }
+  const n = Math.floor((hi - lo) / p.bin) + 1, count = new Array(n).fill(0);
+  for (const [a, z] of periods.values())
+    for (let k = Math.floor((a - lo) / p.bin); k <= Math.floor((z - lo) / p.bin); k++) count[k]++;
+  const most = Math.max(...count);
+  for (let k = 0; k < n; k++) {
+    const bot = lo + k * p.bin, top = bot + p.bin;
+    const y1 = p.candles.priceToCoordinate(top), y2 = p.candles.priceToCoordinate(bot);
+    if (y1 === null || y2 === null) continue;
+    const inBand = p.band && bot < p.band.high && top > p.band.low;
+    ctx.fillStyle = inBand ? "rgba(245,166,35,.85)" : count[k] === 1 ? "rgba(120,123,134,.45)" : "rgba(41,98,255,.4)";
+    const bw = count[k] / most * (pw - 4);
+    ctx.fillRect(pw - bw, y1, bw, Math.max(1, y2 - y1 - 1));
+  }
+}
+setInterval(() => Object.values(panes).forEach(drawProfile), 250);
+
+function logAlert(m) {
+  const log = document.getElementById("log");
+  log.querySelector(".empty")?.remove();
+  const row = document.createElement("div");
+  row.innerHTML = `<span class="t"></span><span></span>`;
+  row.children[0].textContent = m.time;
+  row.children[1].textContent = m.text;
+  log.prepend(row);
+}
+
+function handle(m) {
+  if (m.type === "alert") return logAlert(m);
+  const p = pane(m.symbol);
+  if (m.type === "meta") p.bin = m.bin;
+  else if (m.type === "reset") reset(p);
+  else if (m.type === "bar") onBar(p, m);
+  else if (m.type === "band") setBand(p, m.band);
+}
+
+const status = document.getElementById("status");
+function connect() {
+  const es = new EventSource("/events");
+  es.onopen = () => {
+    status.textContent = "已连接 · 实时"; status.className = "ok";
+    Object.values(panes).forEach(reset);  // the server replays today's state on every connection
+    document.getElementById("log").innerHTML = "";
+  };
+  es.onmessage = (e) => handle(JSON.parse(e.data));
+  es.onerror = () => { status.textContent = "连接断开，重连中…"; status.className = ""; };
+}
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,295 @@
+"""Read-only order-flow alerts on NQ/ES futures from the TradeStation 1-minute bar stream (never places orders).
+
+Every closed RTH bar is printed as one JSON line with its delta (UpVolume - DownVolume: volume on up-ticks minus
+down-ticks, a tick-rule estimate of aggressive buying minus selling) and the cumulative delta since 09:30 ET.
+A macOS notification fires when the day's market profile shows a single-print band, i.e. a double-distribution
+shape: 30-minute periods, a band of price touched by only one period that is at least 8% of the day's range,
+with prices touched by two or more periods both above and below it. A second one fires when that band is filled.
+On 2025-02..2026-11 bars such a band seen by 11:30 still stood at the close 42-44% of the time, by 13:30 70-72%.
+
+A local panel at http://127.0.0.1:8765 (this Mac only) charts the same data live: candles, delta, cumulative
+delta, the 30-minute profile with the single-print band, and the alerts.
+"""
+
+from __future__ import annotations
+
+import argparse
+import collections
+import datetime as dt
+import http.server
+import json
+import queue
+import signal
+import subprocess
+import sys
+import threading
+import time
+import webbrowser
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from .tradestation import CREDENTIALS, LIVE_URL, TradeStationClient
+
+ET = ZoneInfo("America/New_York")
+BIN = {"NQ": 5.0, "ES": 1.25}  # price bucket for the profile, in points
+MIN_BAND = 0.08  # single-print band height as a fraction of the day's range
+PANEL_HTML = Path(__file__).with_name("flow_panel.html")
+
+
+class Hub:
+    """Today's RTH bars, single-print bands and alerts, fanned out to the panel's browser connections."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.metas: dict[str, dict] = {}
+        self.bars: dict[str, dict[int, dict]] = collections.defaultdict(dict)  # symbol -> chart time -> bar event
+        self.bands: dict[str, dict] = {}
+        self.days: dict[str, dt.date] = {}
+        self.alerts: collections.deque = collections.deque(maxlen=50)
+        self.clients: list[queue.Queue] = []
+
+    def _send(self, event: dict) -> None:
+        for q in self.clients:
+            try:
+                q.put_nowait(event)
+            except queue.Full:  # a stalled browser tab misses updates rather than growing memory
+                pass
+
+    def meta(self, symbol: str, size: float) -> None:
+        with self.lock:
+            self.metas[symbol] = {"type": "meta", "symbol": symbol, "bin": size}
+            self._send(self.metas[symbol])
+
+    def bar(self, symbol: str, end: dt.datetime, minute: int, msg: dict) -> None:
+        day = end.astimezone(ET).date()
+        # chart time: the bar's start as ET wall-clock seconds, since the chart library draws times in UTC
+        t = int((end - dt.timedelta(minutes=1)).astimezone(ET).replace(tzinfo=dt.timezone.utc).timestamp())
+        event = {"type": "bar", "symbol": symbol, "time": t, "minute": minute, "open": float(msg["Open"]),
+                 "high": float(msg["High"]), "low": float(msg["Low"]), "close": float(msg["Close"]),
+                 "delta": int(msg.get("UpVolume") or 0) - int(msg.get("DownVolume") or 0)}
+        with self.lock:
+            if self.days.get(symbol) != day:
+                self.days[symbol] = day
+                self.bars[symbol] = {}
+                self.bands.pop(symbol, None)
+                self._send({"type": "reset", "symbol": symbol})
+            self.bars[symbol][t] = event
+            self._send(event)
+
+    def band(self, symbol: str, band: tuple[float, float] | None) -> None:
+        event = {"type": "band", "symbol": symbol, "band": {"low": band[0], "high": band[1]} if band else None}
+        with self.lock:
+            self.bands[symbol] = event
+            self._send(event)
+
+    def alert(self, text: str) -> None:
+        event = {"type": "alert", "time": dt.datetime.now(ET).strftime("%H:%M:%S"), "text": text}
+        with self.lock:
+            self.alerts.append(event)
+            self._send(event)
+
+    def subscribe(self) -> tuple[queue.Queue, list[dict]]:
+        """A queue of future events plus the current state to replay first."""
+        q: queue.Queue = queue.Queue(maxsize=5000)
+        with self.lock:
+            snapshot = list(self.metas.values())
+            for symbol, bars in self.bars.items():
+                snapshot += [bars[t] for t in sorted(bars)]
+            snapshot += list(self.bands.values()) + list(self.alerts)
+            self.clients.append(q)
+        return q, snapshot
+
+    def unsubscribe(self, q: queue.Queue) -> None:
+        with self.lock:
+            self.clients.remove(q)
+
+
+def serve_panel(hub: Hub, port: int) -> http.server.ThreadingHTTPServer:
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args) -> None:
+            pass
+
+        def do_GET(self) -> None:
+            if self.path == "/":
+                body = PANEL_HTML.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            elif self.path == "/events":  # server-sent events, one JSON object each
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                q, snapshot = hub.subscribe()
+                try:
+                    for event in snapshot:
+                        self.wfile.write(f"data: {json.dumps(event)}\n\n".encode())
+                    self.wfile.flush()
+                    while True:
+                        try:
+                            self.wfile.write(f"data: {json.dumps(q.get(timeout=15))}\n\n".encode())
+                        except queue.Empty:
+                            self.wfile.write(b": ping\n\n")
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                finally:
+                    hub.unsubscribe(q)
+            else:
+                self.send_error(404)
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def bucket(symbol: str) -> float:
+    root = symbol.lstrip("@").upper()[:3]
+    return BIN[root[1:] if root.startswith("M") else root[:2]]
+
+
+def rth_minute(end: dt.datetime) -> int | None:
+    """Minutes since 09:30 ET at the bar's open, or None outside 09:30-16:00 on a weekday."""
+    e = end.astimezone(ET)
+    m = e.hour * 60 + e.minute - 1 - 570
+    return m if e.weekday() < 5 and 0 <= m < 390 else None
+
+
+def single_print_band(bars: list[tuple[int, float, float]], size: float) -> tuple[float, float] | None:
+    """Tallest single-print band inside the profile of (minute, high, low) bars, as (low, high) prices."""
+    if not bars:
+        return None
+    lo = min(b[2] for b in bars)
+    hi = max(b[1] for b in bars)
+    n = int((hi - lo) / size) + 1
+    periods: dict[int, list] = collections.defaultdict(list)
+    for m, h, l in bars:
+        periods[m // 30].append((h, l))
+    count = [0] * n
+    for p in periods.values():
+        for k in range(int((min(l for _, l in p) - lo) / size), int((max(h for h, _ in p) - lo) / size) + 1):
+            count[k] += 1
+    best, run = None, 0
+    for k in range(n):
+        run = run + 1 if count[k] == 1 else 0
+        if run and max(count[:k - run + 1] or [0]) >= 2 and max(count[k + 1:] or [0]) >= 2 and (best is None or run > best[1] - best[0]):
+            best = (k - run + 1, k + 1)
+    if best is None or (best[1] - best[0]) * size < MIN_BAND * (hi - lo):
+        return None
+    return lo + best[0] * size, lo + best[1] * size
+
+
+class FlowWatcher:
+    def __init__(self, symbol: str, notify, log=None, hub: Hub | None = None):
+        self.symbol = symbol
+        self.size = bucket(symbol)
+        self.notify = notify
+        self.log = log or (lambda event: print(json.dumps(event, ensure_ascii=False), flush=True))
+        self.hub = hub
+        self.day: dt.date | None = None
+        self.bars: dict[int, tuple[float, float, int]] = {}  # minute -> (high, low, delta), closed RTH bars only
+        self.band: tuple[float, float] | None = None
+        if hub:
+            hub.meta(symbol, self.size)
+
+    def on_message(self, msg: dict) -> None:
+        if "TimeStamp" not in msg:
+            return
+        end = dt.datetime.fromisoformat(msg["TimeStamp"].replace("Z", "+00:00"))
+        m = rth_minute(end)
+        if m is None:
+            return
+        if self.hub:  # the panel also shows the open bar, tick by tick
+            self.hub.bar(self.symbol, end, m, msg)
+        if msg.get("BarStatus") != "Closed" or m in self.bars and self.day == end.astimezone(ET).date():
+            return
+        if self.day != end.astimezone(ET).date():
+            self.day, self.bars, self.band = end.astimezone(ET).date(), {}, None
+        delta = int(msg.get("UpVolume") or 0) - int(msg.get("DownVolume") or 0)
+        self.bars[m] = (float(msg["High"]), float(msg["Low"]), delta)
+        live = bool(msg.get("IsRealtime"))  # backfilled bars only rebuild the state, without alerts
+        hhmm = end.astimezone(ET).strftime("%H:%M")
+        self.log({"event": "bar", "symbol": self.symbol, "time": hhmm, "close": float(msg["Close"]), "delta": delta,
+                  "cum_delta": sum(b[2] for b in self.bars.values())})
+        band = single_print_band([(k, h, l) for k, (h, l, _) in self.bars.items()], self.size)
+        name = self.symbol.lstrip("@")
+        if band and band != self.band:
+            self.log({"event": "band", "symbol": self.symbol, "time": hhmm, "low": band[0], "high": band[1]})
+            if live and (self.band is None or band[1] - band[0] > self.band[1] - self.band[0]):
+                self.notify(f"{name} {hhmm} 出现单印区 {band[0]:g}–{band[1]:g}（双分布形态）")
+        elif self.band and not band:
+            self.log({"event": "band_filled", "symbol": self.symbol, "time": hhmm, "low": self.band[0], "high": self.band[1]})
+            if live:
+                self.notify(f"{name} {hhmm} 单印区 {self.band[0]:g}–{self.band[1]:g} 已回补")
+        if self.hub and band != self.band:
+            self.hub.band(self.symbol, band)
+        self.band = band
+
+    def run(self, client: TradeStationClient, stop: threading.Event) -> None:
+        """Follow the bar stream, reconnecting when it drops; each connection backfills today's RTH bars."""
+        while not stop.is_set():
+            try:
+                now = dt.datetime.now(ET)
+                barsback = min(max(now.hour * 60 + now.minute - 570, 0) + 5, 400)
+                for msg in client.stream_bars(self.symbol, barsback):
+                    if stop.is_set():
+                        return
+                    if "Error" in msg:
+                        self.log({"event": "stream_end", "symbol": self.symbol, "message": msg})
+                        break
+                    self.on_message(msg)
+            except Exception as exc:
+                self.log({"event": "stream_error", "symbol": self.symbol, "error": str(exc)})
+            stop.wait(5)
+
+
+def mac_notify(text: str) -> None:
+    script = f"display notification {json.dumps(text)} with title \"订单流提醒\" sound name \"Glass\""
+    subprocess.run(["osascript", "-e", script], check=False, capture_output=True)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="orderflow-alert", description="Read-only delta and single-print (double distribution) alerts on NQ/ES.")
+    parser.add_argument("--symbol", action="append", metavar="SYMBOL", help="NQ/ES/MNQ/MES symbol to watch (repeatable; default @MNQ and @MES)")
+    parser.add_argument("--no-notify", action="store_true", help="only print JSON lines, no macOS notifications")
+    parser.add_argument("--port", type=int, default=8765, help="local panel port (default 8765); 0 = no panel")
+    parser.add_argument("--no-browser", action="store_true", help="serve the panel without opening it in the browser")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if not CREDENTIALS.exists():
+        print(f"{CREDENTIALS} is missing. Run orderflow-login first.", file=sys.stderr)
+        return 78
+    client = TradeStationClient(LIVE_URL)
+    hub = Hub() if args.port else None
+
+    def notify(text: str) -> None:
+        if not args.no_notify:
+            mac_notify(text)
+        if hub:
+            hub.alert(text)
+
+    stop = threading.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: stop.set())
+    for symbol in args.symbol or ["@MNQ", "@MES"]:
+        threading.Thread(target=FlowWatcher(symbol, notify, hub=hub).run, args=(client, stop), daemon=True).start()
+    print("flow alert started", file=sys.stderr, flush=True)
+    if hub:
+        serve_panel(hub, args.port)
+        url = f"http://127.0.0.1:{args.port}/"
+        print(f"panel: {url}", file=sys.stderr, flush=True)
+        if not args.no_browser:
+            webbrowser.open(url)
+    while not stop.is_set():
+        time.sleep(0.5)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
