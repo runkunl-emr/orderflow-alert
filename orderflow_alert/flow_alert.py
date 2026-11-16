@@ -252,7 +252,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-notify", action="store_true", help="only print JSON lines, no macOS notifications")
     parser.add_argument("--port", type=int, default=8765, help="local panel port (default 8765); 0 = no panel")
     parser.add_argument("--no-browser", action="store_true", help="serve the panel without opening it in the browser")
-    parser.add_argument("--source", choices=["tradestation", "ibkr"], default="tradestation", help="where the bars come from (default tradestation)")
+    parser.add_argument("--source", choices=["auto", "tradestation", "ibkr"], default="auto",
+                        help="where the bars come from. auto (default): TradeStation if logged in, else IBKR if ib_async is installed")
     ib = parser.add_argument_group("ibkr", "connection to a running TWS or IB Gateway (API enabled)")
     ib.add_argument("--ib-host", default="127.0.0.1")
     ib.add_argument("--ib-port", type=int, default=7496, help="TWS live 7496 / paper 7497; IB Gateway live 4001 / paper 4002 (default 7496)")
@@ -260,18 +261,35 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def make_source(args) -> BarSource:
-    if args.source == "ibkr":
+def pick_source(requested: str) -> tuple[str, str]:
+    """Which source to use, and why. An explicit --source always wins; auto prefers a TradeStation login, then IBKR."""
+    if requested != "auto":
+        return requested, "chosen with --source"
+    from .tradestation import CREDENTIALS
+    if CREDENTIALS.exists():
+        return "tradestation", "auto: TradeStation login found"
+    try:
+        import ib_async  # noqa: F401
+    except ImportError:
+        raise SystemExit("No data source set up. Either\n"
+                         "  TradeStation: run orderflow-login once, or\n"
+                         "  IBKR: pip install 'orderflow-alert[ibkr]' and start TWS / IB Gateway with the API enabled.")
+    return "ibkr", "auto: no TradeStation login, ib_async installed"
+
+
+def make_source(args) -> tuple[BarSource, str]:
+    name, why = pick_source(args.source)
+    if name == "ibkr":
         from .ibkr import IBKRSource
-        return IBKRSource(args.ib_host, args.ib_port, args.ib_client_id)
+        return IBKRSource(args.ib_host, args.ib_port, args.ib_client_id), why
     from .tradestation import TradeStationSource
-    return TradeStationSource()
+    return TradeStationSource(), why
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        source = make_source(args)
+        source, why = make_source(args)
     except SystemExit as exc:   # missing credentials / missing optional package: explain and exit
         print(exc, file=sys.stderr)
         return 78
@@ -288,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
         signal.signal(sig, lambda *_: stop.set())
     for symbol in args.symbol or ["@MNQ", "@MES"]:
         threading.Thread(target=FlowWatcher(symbol, notify, hub=hub).run, args=(source, stop), daemon=True).start()
-    print(f"flow alert started ({source.name})", file=sys.stderr, flush=True)
+    print(f"flow alert started: {source.name} ({why})", file=sys.stderr, flush=True)
     if hub:
         serve_panel(hub, args.port)
         url = f"http://127.0.0.1:{args.port}/"

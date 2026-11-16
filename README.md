@@ -53,11 +53,12 @@ python3 -m venv .venv
 ## Usage
 
 ```bash
-.venv/bin/orderflow-alert                      # TradeStation; watches @MNQ and @MES, opens the panel
+.venv/bin/orderflow-alert                      # watches @MNQ and @MES, opens the panel
 .venv/bin/orderflow-alert --symbol @NQ --symbol @ES
-.venv/bin/orderflow-alert --source ibkr        # IBKR via TWS on 127.0.0.1:7496
-.venv/bin/orderflow-alert --source ibkr --ib-port 4002   # IB Gateway, paper account
+.venv/bin/orderflow-alert --ib-port 4002       # IBKR through IB Gateway, paper account
 ```
+
+The broker is picked automatically: **TradeStation** if you have run `orderflow-login`, otherwise **IBKR** if the `[ibkr]` extra is installed. The first line it prints says which one and why. Set up both? It uses TradeStation; add `--source ibkr` to use IBKR.
 
 | Option | Meaning |
 |---|---|
@@ -65,7 +66,7 @@ python3 -m venv .venv
 | `--no-notify` | Only print JSON lines; no macOS notifications. |
 | `--port N` | Panel port (default `8765`); `0` turns the panel off. |
 | `--no-browser` | Serve the panel without opening it in the browser. |
-| `--source` | `tradestation` (default) or `ibkr`. |
+| `--source` | `auto` (default), `tradestation` or `ibkr`. Auto: TradeStation if logged in, else IBKR if `ib_async` is installed. |
 | `--ib-host` / `--ib-port` | Where TWS / IB Gateway listens. Default `127.0.0.1:7496` (TWS live). TWS paper `7497`, Gateway live `4001`, Gateway paper `4002`. |
 | `--ib-client-id` | API client ID, unique among programs connected to the same TWS (default `17`). |
 

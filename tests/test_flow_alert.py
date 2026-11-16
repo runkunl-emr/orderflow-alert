@@ -103,3 +103,24 @@ def test_panel_serves_page_and_event_stream():
             assert json.loads(r.readline().decode().removeprefix("data: ")) == {"type": "meta", "symbol": "@MES", "bin": 1.25}
     finally:
         server.shutdown()
+
+
+def test_pick_source(monkeypatch, tmp_path):
+    import sys
+
+    import pytest
+
+    from orderflow_alert import tradestation
+    from orderflow_alert.flow_alert import pick_source
+
+    creds = tmp_path / "tradestation.json"
+    monkeypatch.setattr(tradestation, "CREDENTIALS", creds)
+    assert pick_source("ibkr")[0] == "ibkr"                       # explicit choice always wins
+    assert pick_source("tradestation")[0] == "tradestation"
+    assert pick_source("auto")[0] == "ibkr"                       # no TradeStation login, ib_async installed (dev extra)
+    creds.write_text("{}")
+    assert pick_source("auto")[0] == "tradestation"               # a TradeStation login wins
+    creds.unlink()
+    monkeypatch.setitem(sys.modules, "ib_async", None)            # simulate ib_async not installed
+    with pytest.raises(SystemExit, match="No data source set up"):
+        pick_source("auto")

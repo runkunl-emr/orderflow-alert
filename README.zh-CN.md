@@ -53,11 +53,12 @@ python3 -m venv .venv
 ## 使用
 
 ```bash
-.venv/bin/orderflow-alert                      # TradeStation；监看 @MNQ 和 @MES，并打开面板
+.venv/bin/orderflow-alert                      # 监看 @MNQ 和 @MES，并打开面板
 .venv/bin/orderflow-alert --symbol @NQ --symbol @ES
-.venv/bin/orderflow-alert --source ibkr        # IBKR，连本机 TWS 的 7496 端口
-.venv/bin/orderflow-alert --source ibkr --ib-port 4002   # IB Gateway 模拟账户
+.venv/bin/orderflow-alert --ib-port 4002       # IBKR，通过 IB Gateway 连模拟账户
 ```
+
+券商会自动选：跑过 `orderflow-login` 就用 **TradeStation**，否则装了 `[ibkr]` 就用 **IBKR**。启动时第一行会说明选了哪个、为什么。两家都配好了的话默认用 TradeStation；要用 IBKR，加 `--source ibkr`。
 
 | 参数 | 作用 |
 |---|---|
@@ -65,7 +66,7 @@ python3 -m venv .venv
 | `--no-notify` | 只输出 JSON 行，不发 macOS 通知。 |
 | `--port N` | 面板端口（默认 `8765`）；`0` 表示不开面板。 |
 | `--no-browser` | 开面板但不自动在浏览器里打开。 |
-| `--source` | `tradestation`（默认）或 `ibkr`。 |
+| `--source` | `auto`（默认）、`tradestation` 或 `ibkr`。auto：登录过 TradeStation 就用它，否则装了 `ib_async` 就用 IBKR。 |
 | `--ib-host` / `--ib-port` | TWS / IB Gateway 监听的地址。默认 `127.0.0.1:7496`（TWS 实盘）。TWS 模拟 `7497`，Gateway 实盘 `4001`，Gateway 模拟 `4002`。 |
 | `--ib-client-id` | API 客户端 ID，同一个 TWS 上连的各个程序要互不相同（默认 `17`）。 |
 
