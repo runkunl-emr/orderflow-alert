@@ -49,3 +49,7 @@ Credentials are stored in `~/Library/Application Support/orderflow-alert/tradest
 .venv/bin/pip install -e '.[dev]'
 .venv/bin/pytest -q
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).

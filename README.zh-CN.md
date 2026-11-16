@@ -49,3 +49,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 .venv/bin/pytest -q
 ```
+
+## 许可证
+
+MIT，见 [LICENSE](LICENSE)。
