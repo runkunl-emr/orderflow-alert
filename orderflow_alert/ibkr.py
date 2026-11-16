@@ -9,7 +9,8 @@ so they rebuild the market profile but count as zero delta: cumulative delta cov
 been running.
 
 Needs: `pip install 'orderflow-alert[ibkr]'`, TWS or IB Gateway running with the API enabled, and real-time CME
-market data on the account. The connection is read-only (orders are refused at the API level).
+market data on the account. This module never sends orders. To make TWS itself refuse orders from any API
+client, turn on "Read-Only API" in the TWS / IB Gateway API settings.
 """
 
 from __future__ import annotations
@@ -95,7 +96,8 @@ class IBKRSource:
         if self.ib is None:
             self.ib = IB()
         if not self.ib.isConnected():
-            # readonly: the API refuses orders on this connection; fetch nothing account-related at startup
+            # readonly=True tells ib_async that TWS may be in Read-Only API mode (it does not block orders by itself;
+            # the TWS setting does). This module sends no orders either way. Fetch nothing account-related at startup.
             await self.ib.connectAsync(self.host, self.port, clientId=self.client_id, readonly=True,
                                        fetchFields=StartupFetch(0))
         return self.ib

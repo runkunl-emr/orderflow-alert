@@ -2,81 +2,163 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-Read-only order-flow alerts for NQ / ES futures (and the micros MNQ / MES), with data from **TradeStation** or **Interactive Brokers**. It never places, changes or cancels orders: the TradeStation login only asks for market-data access, and the IBKR connection is opened read-only.
+## 1. Purpose
 
-What it does:
+This tool monitors order flow on NQ and ES futures. It also monitors the micro contracts MNQ and MES.
 
-- **Delta per bar** — volume traded on up-ticks minus volume traded on down-ticks, a tick-rule estimate of aggressive buying minus aggressive selling. Every closed regular-session bar is printed as one JSON line.
-- **Cumulative delta** since 09:30 New York time.
-- **Single-print alert** — builds the day's market profile in 30-minute periods and sends a macOS notification when a single-print band appears: a band of price touched by only one period, at least 8% of the day's range, with prices touched by two or more periods both above and below it (a double-distribution day). A second notification fires when the band gets filled.
-- **Live panel** at `http://127.0.0.1:8765` (this Mac only): candles, delta, cumulative delta, the 30-minute profile with the single-print band, and the alerts.
+It gets data from TradeStation or from Interactive Brokers (IBKR).
 
-On 2025-02 … 2026-11 bars, a single-print band seen by 11:30 New York time was still standing at the close 42–44% of the time; one seen by 13:30, 70–72% of the time.
+It does not place, change or cancel orders.
 
-## Data sources
+## 2. What the tool shows
 
-| | TradeStation (default) | Interactive Brokers |
-|---|---|---|
-| Delta from | the bar stream's own up-tick / down-tick volume | tick-by-tick trades, classified with the tick rule |
-| Today's bars before start | backfilled with delta | backfilled **without** delta (IBKR history has no buy/sell split): the profile is complete, cumulative delta counts from when the program started |
-| Extra package | none — standard library only | `ib_async` |
-| Runs against | TradeStation's web API | a running TWS or IB Gateway |
-
-Both use the same tick rule, so their deltas are comparable. Adding another broker means writing one source that yields `bars.Bar` objects; `flow_alert` never sees broker fields.
-
-## Requirements
-
-- macOS (notifications use `osascript`)
-- Python 3.10+
-- **TradeStation:** an account with an API key (client ID + secret). Every TradeStation API key comes with `http://localhost:3000` registered as a redirect URI, which the login uses.
-- **IBKR:** TWS or IB Gateway running with the API enabled (in its API settings, turn on *Enable ActiveX and Socket Clients*), and real-time CME futures market data on the account.
-
-## Setup
-
-TradeStation:
-
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -e .
-.venv/bin/orderflow-login        # one time: asks for the API key and secret, then opens the TradeStation sign-in page
-```
-
-Credentials are stored in `~/Library/Application Support/orderflow-alert/tradestation.json` with mode `0600`.
-
-IBKR:
-
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -e '.[ibkr]'
-```
-
-## Usage
-
-```bash
-.venv/bin/orderflow-alert                      # watches @MNQ and @MES, opens the panel
-.venv/bin/orderflow-alert --symbol @NQ --symbol @ES
-.venv/bin/orderflow-alert --ib-port 4002       # IBKR through IB Gateway, paper account
-```
-
-The broker is picked automatically: **TradeStation** if you have run `orderflow-login`, otherwise **IBKR** if the `[ibkr]` extra is installed. The first line it prints says which one and why. Set up both? It uses TradeStation; add `--source ibkr` to use IBKR.
-
-| Option | Meaning |
+| Item | Meaning |
 |---|---|
-| `--symbol SYMBOL` | NQ / ES / MNQ / MES symbol to watch; repeatable. Default `@MNQ` and `@MES`. |
-| `--no-notify` | Only print JSON lines; no macOS notifications. |
-| `--port N` | Panel port (default `8765`); `0` turns the panel off. |
-| `--no-browser` | Serve the panel without opening it in the browser. |
-| `--source` | `auto` (default), `tradestation` or `ibkr`. Auto: TradeStation if logged in, else IBKR if `ib_async` is installed. |
-| `--ib-host` / `--ib-port` | Where TWS / IB Gateway listens. Default `127.0.0.1:7496` (TWS live). TWS paper `7497`, Gateway live `4001`, Gateway paper `4002`. |
-| `--ib-client-id` | API client ID, unique among programs connected to the same TWS (default `17`). |
+| Delta | Buy volume minus sell volume in one 1-minute bar. |
+| Cumulative delta | The sum of all deltas since 09:30 New York time. |
+| Single-print band | A price area that only one 30-minute period touched. Other periods traded above it and below it. |
+| Band filled | Price came back into the band. The band is gone. |
 
-## Tests
+The tool counts a trade at a higher price than the previous trade as a buy. It counts a trade at a lower price as a sell. A trade at the same price gets the side of the previous trade.
 
-```bash
-.venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest -q             # no TWS or TradeStation login needed
-```
+The tool sends a macOS notification when a band starts. It sends one more notification when the band is filled.
 
-## License
+NOTE: From February 2025 to November 2026, 42–44% of bands found by 11:30 New York time were still open at the close. For bands found by 13:30, the value was 70–72%.
 
-MIT — see [LICENSE](LICENSE).
+## 3. Before you start
+
+Make sure that you have these items:
+
+- [ ] A Mac.
+- [ ] Python 3.10 or later.
+- [ ] One of these broker accounts:
+  - [ ] TradeStation, with an API key (client ID and client secret).
+  - [ ] IBKR, with real-time CME futures market data, and TWS or IB Gateway installed.
+
+## 4. Install
+
+### 4.1 TradeStation
+
+1. Open Terminal.
+2. Go to the project folder.
+3. Type `python3 -m venv .venv` and push Return.
+4. Type `.venv/bin/pip install -e .` and push Return.
+5. Type `.venv/bin/orderflow-login` and push Return.
+6. Type your API key and push Return.
+7. Type your API secret and push Return.
+
+   Result: The TradeStation sign-in page opens in your browser.
+
+8. Sign in to TradeStation.
+9. Accept the access request.
+
+   Result: The page shows "TradeStation login received".
+
+NOTE: The tool asks only for market data access. It cannot see or change your account.
+
+NOTE: The tool keeps your credentials in `~/Library/Application Support/orderflow-alert/tradestation.json`. Only your user can read this file.
+
+### 4.2 IBKR
+
+1. Open Terminal.
+2. Go to the project folder.
+3. Type `python3 -m venv .venv` and push Return.
+4. Type `.venv/bin/pip install -e '.[ibkr]'` and push Return.
+5. Start TWS or IB Gateway.
+6. Open its API settings.
+7. Turn on **Enable ActiveX and Socket Clients**.
+8. Turn on **Read-Only API**.
+
+NOTE: The tool does not contain code that sends orders. Step 8 is an additional protection: with **Read-Only API** on, TWS refuses orders from all API programs.
+
+## 5. Start the tool
+
+1. If you use IBKR, make sure that TWS or IB Gateway is running.
+2. In Terminal, go to the project folder.
+3. Type `.venv/bin/orderflow-alert` and push Return.
+
+   Result: The first line shows the broker in use. Example: `flow alert started: ibkr (auto: no TradeStation login, ib_async installed)`.
+
+   Result: The panel opens in your browser at `http://127.0.0.1:8765`.
+
+The tool selects the broker automatically:
+
+| Condition | Broker in use |
+|---|---|
+| You did the TradeStation login (step 4.1). | TradeStation |
+| You did not do the TradeStation login, and you installed the IBKR package (step 4.2). | IBKR |
+| You did neither. | None. The tool shows how to set up a broker and stops. |
+
+To use IBKR when you also have a TradeStation login, add `--source ibkr`.
+
+To stop the tool, push Control-C.
+
+## 6. Options
+
+| Option | Function | Default |
+|---|---|---|
+| `--symbol SYMBOL` | Selects a contract to monitor. Use it one time for each contract. | `@MNQ` and `@MES` |
+| `--source NAME` | Selects the broker: `auto`, `tradestation` or `ibkr`. | `auto` |
+| `--port N` | Sets the panel port. `0` turns the panel off. | `8765` |
+| `--no-browser` | Starts the panel but does not open the browser. | Off |
+| `--no-notify` | Stops macOS notifications. The tool only writes lines in Terminal. | Off |
+| `--ib-host HOST` | Sets the address of TWS or IB Gateway. | `127.0.0.1` |
+| `--ib-port N` | Sets the port of TWS or IB Gateway. | `7496` |
+| `--ib-client-id N` | Sets the API client ID. Use a number that no other program uses on the same TWS. | `17` |
+
+IBKR ports:
+
+| Program | Live account | Paper account |
+|---|---|---|
+| TWS | 7496 | 7497 |
+| IB Gateway | 4001 | 4002 |
+
+Examples:
+
+- Monitor NQ and ES: `.venv/bin/orderflow-alert --symbol @NQ --symbol @ES`
+- Use IB Gateway with a paper account: `.venv/bin/orderflow-alert --ib-port 4002`
+
+## 7. Troubleshooting
+
+| Problem | Cause | Action |
+|---|---|---|
+| `tradestation.json is missing` | You did not do the TradeStation login. | Do step 4.1. |
+| `No data source set up` | No broker is set up. | Do step 4.1 or step 4.2. |
+| `Connect call failed ... 7496` | TWS or IB Gateway is not running, its API is off, or the port is wrong. | Start TWS or IB Gateway. Turn on the API (step 4.2). Check the port (section 6). |
+| `IBKR error 354` or `IBKR error 10089` | The IBKR account does not have real-time CME market data. | Subscribe to CME futures market data in IBKR Client Portal. |
+| The panel does not open. Port 8765 is in use. | Another program uses port 8765. | Start with a different port, for example `--port 8766`. |
+| No notifications. | The market is closed, or the bars are history. | Wait for the regular session: Monday to Friday, 09:30–16:00 New York time. |
+
+NOTE: The tool does not send notifications for bars that it gets as history when it starts. It uses these bars only to build the profile.
+
+NOTE: When the connection stops, the tool tries again every 5 seconds. You do not have to restart it.
+
+## 8. Limits
+
+- IBKR history bars have no buy and sell volume. Thus, with IBKR, cumulative delta starts when the tool starts. To get the full value, start the tool before 09:30 New York time.
+- The tool estimates buy and sell volume from price changes. It does not use the exchange's own buyer and seller data.
+- The tool runs on macOS only, because the notifications use macOS.
+
+## 9. Add a different broker
+
+The main code uses only the `Bar` type in `orderflow_alert/bars.py`.
+
+To add a broker:
+
+1. Write a source class that yields `Bar` objects.
+2. Add the class to `make_source` in `orderflow_alert/flow_alert.py`.
+
+Use `orderflow_alert/tradestation.py` and `orderflow_alert/ibkr.py` as examples.
+
+## 10. Tests
+
+1. Type `.venv/bin/pip install -e '.[dev]'` and push Return.
+2. Type `.venv/bin/pytest -q` and push Return.
+
+   Result: All tests pass.
+
+NOTE: The tests do not need TWS or a TradeStation login.
+
+## 11. License
+
+MIT. Refer to [LICENSE](LICENSE).

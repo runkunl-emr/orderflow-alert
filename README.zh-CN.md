@@ -2,81 +2,163 @@
 
 [English](README.md) | **简体中文**
 
-只读的订单流提醒，适用于 NQ / ES 期货（以及微型合约 MNQ / MES），数据来自 **TradeStation** 或 **盈透（Interactive Brokers）**。它从不下单、改单或撤单：TradeStation 登录时只申请行情权限，IBKR 用只读模式连接。
+## 1. 用途
 
-功能：
+本工具监看 NQ 和 ES 期货的订单流，也监看微型合约 MNQ 和 MES。
 
-- **每根 K 线的 delta**：上涨跳动的成交量减下跌跳动的成交量，用 tick 规则估算主动买入减主动卖出。每根收盘的常规时段 K 线输出一行 JSON。
-- **累计 delta**：从纽约时间 09:30 开始累计。
-- **单印区提醒**：按 30 分钟时段构建当天的 market profile。出现单印区时发 macOS 通知。单印区的条件：一段只被一个时段触及的价格区间，宽度至少占当天波幅的 8%，且它的上方和下方都有被两个及以上时段触及的价格（双分布形态）。单印区被回补时再发一次通知。
-- **实时面板**：`http://127.0.0.1:8765`（仅本机可访问），显示 K 线、delta、累计 delta、带单印区的 30 分钟 profile，以及提醒记录。
+数据来自 TradeStation 或盈透（IBKR）。
 
-在 2025-02 至 2026-11 的数据上，纽约时间 11:30 前出现的单印区，到收盘仍未被回补的比例是 42–44%；13:30 前出现的是 70–72%。
+本工具不下单、不改单、不撤单。
 
-## 数据来源
+## 2. 显示的内容
 
-| | TradeStation（默认） | 盈透 IBKR |
-|---|---|---|
-| delta 怎么来 | K 线流自带的上涨跳动量 / 下跌跳动量 | 逐笔成交，用 tick 规则判断买卖 |
-| 启动前当天已走完的 K 线 | 回补，带 delta | 回补，但**不带** delta（IBKR 的历史 K 线没有买卖拆分）：profile 完整，累计 delta 从程序启动时算起 |
-| 额外依赖 | 无，只用标准库 | `ib_async` |
-| 连接对象 | TradeStation 的 Web API | 本机运行中的 TWS 或 IB Gateway |
-
-两边用的是同一套 tick 规则，delta 可以直接比较。要接其他券商，只需写一个输出 `bars.Bar` 的数据源；`flow_alert` 不接触任何券商字段。
-
-## 运行环境
-
-- macOS（通知用 `osascript`）
-- Python 3.10+
-- **TradeStation**：一个带 API Key（client ID + secret）的账户。每个 TradeStation API Key 都预先登记了回调地址 `http://localhost:3000`，登录流程用的就是它。
-- **IBKR**：TWS 或 IB Gateway 正在运行并开启了 API（在它的 API 设置里勾选 *Enable ActiveX and Socket Clients*），且账户订阅了 CME 期货实时行情。
-
-## 安装
-
-TradeStation：
-
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -e .
-.venv/bin/orderflow-login        # 一次性：输入 API Key 和 secret，然后打开 TradeStation 登录页
-```
-
-凭据保存在 `~/Library/Application Support/orderflow-alert/tradestation.json`，权限 `0600`。
-
-IBKR：
-
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -e '.[ibkr]'
-```
-
-## 使用
-
-```bash
-.venv/bin/orderflow-alert                      # 监看 @MNQ 和 @MES，并打开面板
-.venv/bin/orderflow-alert --symbol @NQ --symbol @ES
-.venv/bin/orderflow-alert --ib-port 4002       # IBKR，通过 IB Gateway 连模拟账户
-```
-
-券商会自动选：跑过 `orderflow-login` 就用 **TradeStation**，否则装了 `[ibkr]` 就用 **IBKR**。启动时第一行会说明选了哪个、为什么。两家都配好了的话默认用 TradeStation；要用 IBKR，加 `--source ibkr`。
-
-| 参数 | 作用 |
+| 项目 | 含义 |
 |---|---|
-| `--symbol SYMBOL` | 要监看的 NQ / ES / MNQ / MES 合约，可重复。默认 `@MNQ` 和 `@MES`。 |
-| `--no-notify` | 只输出 JSON 行，不发 macOS 通知。 |
-| `--port N` | 面板端口（默认 `8765`）；`0` 表示不开面板。 |
-| `--no-browser` | 开面板但不自动在浏览器里打开。 |
-| `--source` | `auto`（默认）、`tradestation` 或 `ibkr`。auto：登录过 TradeStation 就用它，否则装了 `ib_async` 就用 IBKR。 |
-| `--ib-host` / `--ib-port` | TWS / IB Gateway 监听的地址。默认 `127.0.0.1:7496`（TWS 实盘）。TWS 模拟 `7497`，Gateway 实盘 `4001`，Gateway 模拟 `4002`。 |
-| `--ib-client-id` | API 客户端 ID，同一个 TWS 上连的各个程序要互不相同（默认 `17`）。 |
+| delta | 一根 1 分钟 K 线里，买入量减卖出量。 |
+| 累计 delta | 从纽约时间 09:30 起，所有 delta 之和。 |
+| 单印区 | 只被一个 30 分钟时段触及过的价格区间。它的上方和下方都有其他时段成交过。 |
+| 单印区回补 | 价格回到了单印区里。单印区消失。 |
 
-## 测试
+成交价比上一笔高，算买入。成交价比上一笔低，算卖出。成交价和上一笔相同，沿用上一笔的方向。
 
-```bash
-.venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest -q             # 不需要 TWS，也不需要 TradeStation 登录
-```
+单印区出现时，本工具发一条 macOS 通知。单印区被回补时，再发一条。
 
-## 许可证
+说明：2025 年 2 月至 2026 年 11 月的数据中，纽约时间 11:30 前出现的单印区，有 42–44% 到收盘仍未回补。13:30 前出现的，这个比例是 70–72%。
 
-MIT，见 [LICENSE](LICENSE)。
+## 3. 开始前的检查
+
+确认以下各项都已具备：
+
+- [ ] 一台 Mac。
+- [ ] Python 3.10 或更新版本。
+- [ ] 以下券商账户之一：
+  - [ ] TradeStation，并有 API Key（client ID 和 client secret）。
+  - [ ] IBKR，已订阅 CME 期货实时行情，并已安装 TWS 或 IB Gateway。
+
+## 4. 安装
+
+### 4.1 TradeStation
+
+1. 打开「终端」。
+2. 进入项目文件夹。
+3. 输入 `python3 -m venv .venv`，按回车。
+4. 输入 `.venv/bin/pip install -e .`，按回车。
+5. 输入 `.venv/bin/orderflow-login`，按回车。
+6. 输入 API Key，按回车。
+7. 输入 API secret，按回车。
+
+   结果：浏览器打开 TradeStation 登录页。
+
+8. 登录 TradeStation。
+9. 同意授权请求。
+
+   结果：页面显示「TradeStation login received」。
+
+说明：本工具只申请行情权限。它看不到、也改不了你的账户。
+
+说明：凭据保存在 `~/Library/Application Support/orderflow-alert/tradestation.json`。只有你的用户能读这个文件。
+
+### 4.2 IBKR
+
+1. 打开「终端」。
+2. 进入项目文件夹。
+3. 输入 `python3 -m venv .venv`，按回车。
+4. 输入 `.venv/bin/pip install -e '.[ibkr]'`，按回车。
+5. 启动 TWS 或 IB Gateway。
+6. 打开它的 API 设置。
+7. 勾选 **Enable ActiveX and Socket Clients**。
+8. 勾选 **Read-Only API**。
+
+说明：本工具的代码里没有任何下单功能。第 8 步是额外的保护：打开 **Read-Only API** 后，TWS 会拒绝所有 API 程序的下单。
+
+## 5. 启动
+
+1. 用 IBKR 的话，先确认 TWS 或 IB Gateway 正在运行。
+2. 在「终端」里进入项目文件夹。
+3. 输入 `.venv/bin/orderflow-alert`，按回车。
+
+   结果：第一行显示正在使用的券商。例如：`flow alert started: ibkr (auto: no TradeStation login, ib_async installed)`。
+
+   结果：浏览器打开面板，地址是 `http://127.0.0.1:8765`。
+
+本工具自动选择券商：
+
+| 条件 | 使用的券商 |
+|---|---|
+| 做过 TradeStation 登录（第 4.1 节）。 | TradeStation |
+| 没做 TradeStation 登录，但安装了 IBKR 组件（第 4.2 节）。 | IBKR |
+| 两样都没做。 | 无。本工具说明如何设置券商，然后退出。 |
+
+已经登录过 TradeStation、但这次要用 IBKR：加上 `--source ibkr`。
+
+停止本工具：按 Control-C。
+
+## 6. 参数
+
+| 参数 | 作用 | 默认值 |
+|---|---|---|
+| `--symbol 合约` | 指定要监看的合约。每个合约写一次。 | `@MNQ` 和 `@MES` |
+| `--source 名称` | 指定券商：`auto`、`tradestation` 或 `ibkr`。 | `auto` |
+| `--port 端口` | 设置面板端口。`0` 表示不开面板。 | `8765` |
+| `--no-browser` | 开面板，但不自动打开浏览器。 | 关 |
+| `--no-notify` | 不发 macOS 通知，只在「终端」里输出。 | 关 |
+| `--ib-host 地址` | 设置 TWS 或 IB Gateway 的地址。 | `127.0.0.1` |
+| `--ib-port 端口` | 设置 TWS 或 IB Gateway 的端口。 | `7496` |
+| `--ib-client-id 编号` | 设置 API 客户端编号。同一个 TWS 上，每个程序的编号必须不同。 | `17` |
+
+IBKR 端口：
+
+| 程序 | 实盘账户 | 模拟账户 |
+|---|---|---|
+| TWS | 7496 | 7497 |
+| IB Gateway | 4001 | 4002 |
+
+示例：
+
+- 监看 NQ 和 ES：`.venv/bin/orderflow-alert --symbol @NQ --symbol @ES`
+- 用 IB Gateway 连模拟账户：`.venv/bin/orderflow-alert --ib-port 4002`
+
+## 7. 故障排查
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| `tradestation.json is missing` | 没做 TradeStation 登录。 | 做第 4.1 节。 |
+| `No data source set up` | 没有设置任何券商。 | 做第 4.1 节或第 4.2 节。 |
+| `Connect call failed ... 7496` | TWS 或 IB Gateway 没运行、API 没开，或端口不对。 | 启动 TWS 或 IB Gateway。打开 API（第 4.2 节）。核对端口（第 6 节）。 |
+| `IBKR error 354` 或 `IBKR error 10089` | IBKR 账户没有 CME 实时行情。 | 在 IBKR Client Portal 里订阅 CME 期货行情。 |
+| 面板打不开，8765 端口被占用。 | 另一个程序在用 8765 端口。 | 换一个端口启动，例如 `--port 8766`。 |
+| 没有通知。 | 不在交易时段，或者这些 K 线是历史数据。 | 等常规时段：周一至周五，纽约时间 09:30–16:00。 |
+
+说明：启动时作为历史数据拿到的 K 线，不会触发通知。它们只用来搭建 profile。
+
+说明：连接断开后，本工具每 5 秒自动重连。不需要手动重启。
+
+## 8. 限制
+
+- IBKR 的历史 K 线没有买卖量。所以用 IBKR 时，累计 delta 从本工具启动时开始算。要得到完整数值，在纽约时间 09:30 之前启动。
+- 买卖量是按价格变化估算的，不是交易所提供的真实买卖方数据。
+- 只能在 macOS 上运行，因为通知用的是 macOS 的功能。
+
+## 9. 接入其他券商
+
+主程序只使用 `orderflow_alert/bars.py` 里的 `Bar` 类型。
+
+接入一家券商：
+
+1. 写一个数据源类，输出 `Bar` 对象。
+2. 把这个类加到 `orderflow_alert/flow_alert.py` 的 `make_source` 里。
+
+可以参考 `orderflow_alert/tradestation.py` 和 `orderflow_alert/ibkr.py`。
+
+## 10. 测试
+
+1. 输入 `.venv/bin/pip install -e '.[dev]'`，按回车。
+2. 输入 `.venv/bin/pytest -q`，按回车。
+
+   结果：所有测试通过。
+
+说明：测试不需要 TWS，也不需要 TradeStation 登录。
+
+## 11. 许可证
+
+MIT。见 [LICENSE](LICENSE)。
