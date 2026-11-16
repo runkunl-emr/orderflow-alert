@@ -10,6 +10,7 @@ Credentials live in ~/Library/Application Support/orderflow-alert/tradestation.j
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import getpass
 import http.server
 import json
@@ -22,6 +23,9 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from pathlib import Path
+from typing import Iterator
+
+from .bars import Bar
 
 LIVE_URL = "https://api.tradestation.com/v3"
 SIGNIN_URL = "https://signin.tradestation.com"
@@ -86,6 +90,37 @@ class TradeStationClient:
             for line in response:
                 if line.strip():
                     yield json.loads(line)
+
+
+def to_bar(msg: dict) -> Bar | None:
+    """A barcharts-stream message as a Bar; None for heartbeats and other non-bar messages.
+    TradeStation splits each bar's volume into UpVolume / DownVolume (up-tick / down-tick volume)."""
+    if "TimeStamp" not in msg:
+        return None
+    return Bar(end=dt.datetime.fromisoformat(msg["TimeStamp"].replace("Z", "+00:00")),
+               open=float(msg["Open"]), high=float(msg["High"]), low=float(msg["Low"]), close=float(msg["Close"]),
+               buy_volume=int(msg.get("UpVolume") or 0), sell_volume=int(msg.get("DownVolume") or 0),
+               closed=msg.get("BarStatus") == "Closed", realtime=bool(msg.get("IsRealtime")))
+
+
+class TradeStationSource:
+    """Bars straight from TradeStation's 1-minute barcharts stream. Symbols like @MNQ (continuous) or MNQZ26."""
+
+    name = "tradestation"
+
+    def __init__(self, client: TradeStationClient | None = None):
+        if client is None and not CREDENTIALS.exists():
+            raise SystemExit(f"{CREDENTIALS} is missing. Run orderflow-login first.")
+        self.client = client or TradeStationClient(LIVE_URL)
+
+    def stream(self, symbol: str, since: dt.datetime) -> Iterator[Bar]:
+        minutes = int((dt.datetime.now(dt.timezone.utc) - since).total_seconds() // 60)
+        for msg in self.client.stream_bars(symbol, min(max(minutes, 0) + 5, 400)):
+            if "Error" in msg:
+                raise TradeStationError(f"bar stream ended: {msg}")
+            bar = to_bar(msg)
+            if bar:
+                yield bar
 
 
 def _capture_code(state: str) -> str:

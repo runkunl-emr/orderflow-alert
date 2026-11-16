@@ -1,13 +1,14 @@
 [project]
 name = "orderflow-alert"
 version = "0.1.0"
-description = "Read-only order-flow alerts for NQ/ES futures from the TradeStation 1-minute bar stream: delta, cumulative delta, and single-print (double distribution) alerts, with a local live panel."
+description = "Read-only order-flow alerts for NQ/ES futures from TradeStation or Interactive Brokers: delta, cumulative delta, and single-print (double distribution) alerts, with a local live panel."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ib_async>=2.0"]
+ibkr = ["ib_async>=2.0"]
 
 [project.scripts]
 orderflow-alert = "orderflow_alert.flow_alert:main"

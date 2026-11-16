@@ -1,6 +1,7 @@
-"""Read-only order-flow alerts on NQ/ES futures from the TradeStation 1-minute bar stream (never places orders).
+"""Read-only order-flow alerts on NQ/ES futures from a broker's 1-minute bars (never places orders).
 
-Every closed RTH bar is printed as one JSON line with its delta (UpVolume - DownVolume: volume on up-ticks minus
+Data comes from a pluggable source (bars.BarSource): TradeStation's bar stream, or IBKR trades aggregated into bars.
+Every closed RTH bar is printed as one JSON line with its delta (buy volume - sell volume: volume on up-ticks minus
 down-ticks, a tick-rule estimate of aggressive buying minus selling) and the cumulative delta since 09:30 ET.
 A macOS notification fires when the day's market profile shows a single-print band, i.e. a double-distribution
 shape: 30-minute periods, a band of price touched by only one period that is at least 8% of the day's range,
@@ -28,7 +29,7 @@ import webbrowser
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .tradestation import CREDENTIALS, LIVE_URL, TradeStationClient
+from .bars import Bar, BarSource
 
 ET = ZoneInfo("America/New_York")
 BIN = {"NQ": 5.0, "ES": 1.25}  # price bucket for the profile, in points
@@ -60,13 +61,12 @@ class Hub:
             self.metas[symbol] = {"type": "meta", "symbol": symbol, "bin": size}
             self._send(self.metas[symbol])
 
-    def bar(self, symbol: str, end: dt.datetime, minute: int, msg: dict) -> None:
-        day = end.astimezone(ET).date()
+    def bar(self, symbol: str, bar: Bar, minute: int) -> None:
+        day = bar.end.astimezone(ET).date()
         # chart time: the bar's start as ET wall-clock seconds, since the chart library draws times in UTC
-        t = int((end - dt.timedelta(minutes=1)).astimezone(ET).replace(tzinfo=dt.timezone.utc).timestamp())
-        event = {"type": "bar", "symbol": symbol, "time": t, "minute": minute, "open": float(msg["Open"]),
-                 "high": float(msg["High"]), "low": float(msg["Low"]), "close": float(msg["Close"]),
-                 "delta": int(msg.get("UpVolume") or 0) - int(msg.get("DownVolume") or 0)}
+        t = int((bar.end - dt.timedelta(minutes=1)).astimezone(ET).replace(tzinfo=dt.timezone.utc).timestamp())
+        event = {"type": "bar", "symbol": symbol, "time": t, "minute": minute, "open": bar.open,
+                 "high": bar.high, "low": bar.low, "close": bar.close, "delta": bar.delta}
         with self.lock:
             if self.days.get(symbol) != day:
                 self.days[symbol] = day
@@ -195,24 +195,22 @@ class FlowWatcher:
         if hub:
             hub.meta(symbol, self.size)
 
-    def on_message(self, msg: dict) -> None:
-        if "TimeStamp" not in msg:
-            return
-        end = dt.datetime.fromisoformat(msg["TimeStamp"].replace("Z", "+00:00"))
+    def on_bar(self, bar: Bar) -> None:
+        end = bar.end
         m = rth_minute(end)
         if m is None:
             return
         if self.hub:  # the panel also shows the open bar, tick by tick
-            self.hub.bar(self.symbol, end, m, msg)
-        if msg.get("BarStatus") != "Closed" or m in self.bars and self.day == end.astimezone(ET).date():
+            self.hub.bar(self.symbol, bar, m)
+        if not bar.closed or m in self.bars and self.day == end.astimezone(ET).date():
             return
         if self.day != end.astimezone(ET).date():
             self.day, self.bars, self.band = end.astimezone(ET).date(), {}, None
-        delta = int(msg.get("UpVolume") or 0) - int(msg.get("DownVolume") or 0)
-        self.bars[m] = (float(msg["High"]), float(msg["Low"]), delta)
-        live = bool(msg.get("IsRealtime"))  # backfilled bars only rebuild the state, without alerts
+        delta = bar.delta
+        self.bars[m] = (bar.high, bar.low, delta)
+        live = bar.realtime  # backfilled bars only rebuild the state, without alerts
         hhmm = end.astimezone(ET).strftime("%H:%M")
-        self.log({"event": "bar", "symbol": self.symbol, "time": hhmm, "close": float(msg["Close"]), "delta": delta,
+        self.log({"event": "bar", "symbol": self.symbol, "time": hhmm, "close": bar.close, "delta": delta,
                   "cum_delta": sum(b[2] for b in self.bars.values())})
         band = single_print_band([(k, h, l) for k, (h, l, _) in self.bars.items()], self.size)
         name = self.symbol.lstrip("@")
@@ -228,19 +226,16 @@ class FlowWatcher:
             self.hub.band(self.symbol, band)
         self.band = band
 
-    def run(self, client: TradeStationClient, stop: threading.Event) -> None:
-        """Follow the bar stream, reconnecting when it drops; each connection backfills today's RTH bars."""
+    def run(self, source: BarSource, stop: threading.Event) -> None:
+        """Follow the source's bars, reconnecting when they stop; each connection backfills today's RTH bars."""
         while not stop.is_set():
             try:
-                now = dt.datetime.now(ET)
-                barsback = min(max(now.hour * 60 + now.minute - 570, 0) + 5, 400)
-                for msg in client.stream_bars(self.symbol, barsback):
+                since = dt.datetime.now(ET).replace(hour=9, minute=30, second=0, microsecond=0)
+                for bar in source.stream(self.symbol, since):
                     if stop.is_set():
                         return
-                    if "Error" in msg:
-                        self.log({"event": "stream_end", "symbol": self.symbol, "message": msg})
-                        break
-                    self.on_message(msg)
+                    self.on_bar(bar)
+                self.log({"event": "stream_end", "symbol": self.symbol})
             except Exception as exc:
                 self.log({"event": "stream_error", "symbol": self.symbol, "error": str(exc)})
             stop.wait(5)
@@ -257,15 +252,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-notify", action="store_true", help="only print JSON lines, no macOS notifications")
     parser.add_argument("--port", type=int, default=8765, help="local panel port (default 8765); 0 = no panel")
     parser.add_argument("--no-browser", action="store_true", help="serve the panel without opening it in the browser")
+    parser.add_argument("--source", choices=["tradestation", "ibkr"], default="tradestation", help="where the bars come from (default tradestation)")
+    ib = parser.add_argument_group("ibkr", "connection to a running TWS or IB Gateway (API enabled)")
+    ib.add_argument("--ib-host", default="127.0.0.1")
+    ib.add_argument("--ib-port", type=int, default=7496, help="TWS live 7496 / paper 7497; IB Gateway live 4001 / paper 4002 (default 7496)")
+    ib.add_argument("--ib-client-id", type=int, default=17, help="API client ID, unique among programs connected to TWS (default 17)")
     return parser
+
+
+def make_source(args) -> BarSource:
+    if args.source == "ibkr":
+        from .ibkr import IBKRSource
+        return IBKRSource(args.ib_host, args.ib_port, args.ib_client_id)
+    from .tradestation import TradeStationSource
+    return TradeStationSource()
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if not CREDENTIALS.exists():
-        print(f"{CREDENTIALS} is missing. Run orderflow-login first.", file=sys.stderr)
+    try:
+        source = make_source(args)
+    except SystemExit as exc:   # missing credentials / missing optional package: explain and exit
+        print(exc, file=sys.stderr)
         return 78
-    client = TradeStationClient(LIVE_URL)
     hub = Hub() if args.port else None
 
     def notify(text: str) -> None:
@@ -278,8 +287,8 @@ def main(argv: list[str] | None = None) -> int:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
     for symbol in args.symbol or ["@MNQ", "@MES"]:
-        threading.Thread(target=FlowWatcher(symbol, notify, hub=hub).run, args=(client, stop), daemon=True).start()
-    print("flow alert started", file=sys.stderr, flush=True)
+        threading.Thread(target=FlowWatcher(symbol, notify, hub=hub).run, args=(source, stop), daemon=True).start()
+    print(f"flow alert started ({source.name})", file=sys.stderr, flush=True)
     if hub:
         serve_panel(hub, args.port)
         url = f"http://127.0.0.1:{args.port}/"

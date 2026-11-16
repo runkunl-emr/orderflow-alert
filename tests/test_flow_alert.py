@@ -3,6 +3,14 @@ import json
 import urllib.request
 
 from orderflow_alert.flow_alert import ET, FlowWatcher, Hub, bucket, rth_minute, serve_panel, single_print_band
+from orderflow_alert.tradestation import to_bar
+
+
+def feed(w, m):
+    """Messages are written in TradeStation's stream format and go through its adapter, as in production."""
+    bar = to_bar(m)
+    if bar:
+        w.on_bar(bar)
 
 
 def msg(day, hhmm, high, low, up=10, down=5, live=True, status="Closed"):
@@ -39,14 +47,14 @@ def test_watcher_alerts_once_on_live_band_then_on_fill():
     seen, logs = [], []
     w = FlowWatcher("@MNQ", seen.append, logs.append)
     for t, h, l in (("09:31", 110, 100), ("10:01", 110, 100), ("10:31", 150, 110)):
-        w.on_message(msg(12, t, h, l))
+        feed(w, msg(12, t, h, l))
     assert seen == []  # the run still reaches the day's high
-    w.on_message(msg(12, "11:01", 160, 150))  # a new period builds above it, sharing the 150 bucket
-    w.on_message(msg(12, "11:01", 160, 150))  # repeated closed bar (reconnect backfill) is ignored
+    feed(w, msg(12, "11:01", 160, 150))  # a new period builds above it, sharing the 150 bucket
+    feed(w, msg(12, "11:01", 160, 150))  # repeated closed bar (reconnect backfill) is ignored
     assert seen == ["MNQ 11:01 出现单印区 115–150（双分布形态）"]
-    w.on_message(msg(12, "11:31", 160, 150))
+    feed(w, msg(12, "11:31", 160, 150))
     assert len(seen) == 1  # same band, no repeat
-    w.on_message(msg(12, "12:01", 150, 105))  # a later period trades back through the band
+    feed(w, msg(12, "12:01", 150, 105))  # a later period trades back through the band
     assert seen[-1] == "MNQ 12:01 单印区 115–150 已回补"
     assert [e["cum_delta"] for e in logs if e["event"] == "bar"] == [5, 10, 15, 20, 25, 30]
 
@@ -54,22 +62,22 @@ def test_watcher_alerts_once_on_live_band_then_on_fill():
 def test_backfill_open_bars_and_new_day():
     seen = []
     w = FlowWatcher("@MES", seen.append, lambda e: None)
-    w.on_message(msg(12, "09:45", 7600, 7590, status="Open"))
-    w.on_message({"Heartbeat": 1})
+    feed(w, msg(12, "09:45", 7600, 7590, status="Open"))
+    feed(w, {"Heartbeat": 1})
     assert w.bars == {}
     for t, h, l in (("09:31", 7610, 7600), ("10:01", 7610, 7600), ("10:31", 7650, 7610), ("11:01", 7660, 7650), ("11:31", 7660, 7650)):
-        w.on_message(msg(12, t, h, l, live=False))
+        feed(w, msg(12, t, h, l, live=False))
     assert w.band is not None and seen == []  # backfill rebuilds state without alerting
-    w.on_message(msg(13, "09:31", 7620, 7615))
+    feed(w, msg(13, "09:31", 7620, 7615))
     assert w.day == dt.date(2026, 11, 13) and list(w.bars) == [0] and w.band is None
 
 
 def test_hub_replays_today_and_resets_on_new_day():
     hub = Hub()
     w = FlowWatcher("@MNQ", lambda text: None, lambda e: None, hub=hub)
-    w.on_message(msg(12, "09:32", 110, 100, status="Open"))
-    w.on_message(msg(12, "09:32", 112, 100, up=30, down=10))  # same bar, now closed: replaces the open one
-    w.on_message(msg(12, "09:31", 105, 101))
+    feed(w, msg(12, "09:32", 110, 100, status="Open"))
+    feed(w, msg(12, "09:32", 112, 100, up=30, down=10))  # same bar, now closed: replaces the open one
+    feed(w, msg(12, "09:31", 105, 101))
     hub.alert("MNQ test")
     q, snapshot = hub.subscribe()
     assert [e["type"] for e in snapshot] == ["meta", "bar", "bar", "alert"]
@@ -77,7 +85,7 @@ def test_hub_replays_today_and_resets_on_new_day():
     assert [b["minute"] for b in bars] == [0, 1] and bars[1]["high"] == 112 and bars[1]["delta"] == 20
     # chart time is the bar's start in ET wall-clock: 09:31 for the bar ending 09:32
     assert dt.datetime.fromtimestamp(bars[1]["time"], dt.timezone.utc).strftime("%H:%M") == "09:31"
-    w.on_message(msg(13, "09:31", 120, 115))
+    feed(w, msg(13, "09:31", 120, 115))
     assert q.get_nowait() == {"type": "reset", "symbol": "@MNQ"}
     assert q.get_nowait()["minute"] == 0
     hub.unsubscribe(q)
