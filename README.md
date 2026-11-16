@@ -4,9 +4,9 @@
 
 ## 1. Purpose
 
-This tool monitors order flow on NQ and ES futures. It also monitors the micro contracts MNQ and MES.
+This tool monitors [order flow](https://en.wikipedia.org/wiki/Order_flow_trading) on [NQ](https://en.wikipedia.org/wiki/E-mini) and [ES](https://en.wikipedia.org/wiki/E-mini_S%26P) [futures](https://en.wikipedia.org/wiki/Futures_contract). It also monitors the [micro contracts](https://en.wikipedia.org/wiki/E-mini) MNQ and MES.
 
-It gets data from TradeStation or from Interactive Brokers (IBKR).
+It gets data from [TradeStation](https://en.wikipedia.org/wiki/TradeStation) or from [Interactive Brokers](https://en.wikipedia.org/wiki/Interactive_Brokers) (IBKR).
 
 It does not place, change or cancel orders.
 
@@ -14,14 +14,18 @@ It does not place, change or cancel orders.
 
 | Item | Meaning |
 |---|---|
-| Delta | Buy volume minus sell volume in one 1-minute bar. |
+| Delta | Buy [volume](https://en.wikipedia.org/wiki/Volume_%28finance%29) minus sell volume in one 1-minute bar. |
 | Cumulative delta | The sum of all deltas since 09:30 New York time. |
-| Single-print band | A price area that only one 30-minute period touched. Other periods traded above it and below it. |
+| Single-print band (*single prints*) | A price area that only one 30-minute period touched. Other periods traded above it and below it. This shape is a *double distribution*. |
 | Band filled | Price came back into the band. The band is gone. |
 
-The tool counts a trade at a higher price than the previous trade as a buy. It counts a trade at a lower price as a sell. A trade at the same price gets the side of the previous trade.
+The tool builds a [Market Profile](https://en.wikipedia.org/wiki/Market_profile) of the day in 30-minute periods. It finds the single-print bands in this profile.
+
+The tool counts a trade at a higher price than the previous trade as a buy. It counts a trade at a lower price as a sell. A trade at the same price gets the side of the previous trade. This method is the *tick rule*.
 
 The tool sends a macOS notification when a band starts. It sends one more notification when the band is filled.
+
+NOTE: Wikipedia has no article on single prints, double distribution or the tick rule. For the background, refer to the Market Profile article.
 
 NOTE: From February 2025 to November 2026, 42–44% of bands found by 11:30 New York time were still open at the close. For bands found by 13:30, the value was 70–72%.
 
@@ -33,7 +37,7 @@ Make sure that you have these items:
 - [ ] Python 3.10 or later.
 - [ ] One of these broker accounts:
   - [ ] TradeStation, with an API key (client ID and client secret).
-  - [ ] IBKR, with real-time CME futures market data, and TWS or IB Gateway installed.
+  - [ ] IBKR, with real-time [CME](https://en.wikipedia.org/wiki/CME_Group) futures market data, and TWS or IB Gateway installed.
 
 ## 4. Install
 

@@ -4,9 +4,9 @@
 
 ## 1. 用途
 
-本工具监看 NQ 和 ES 期货的订单流，也监看微型合约 MNQ 和 MES。
+本工具监看 [NQ](https://en.wikipedia.org/wiki/E-mini)（英文）和 [ES](https://en.wikipedia.org/wiki/E-mini_S%26P)（英文）[期货](https://zh.wikipedia.org/zh-cn/期货)的[订单流](https://zh.wikipedia.org/zh-cn/訂單流交易)，也监看[微型合约](https://en.wikipedia.org/wiki/E-mini)（英文）MNQ 和 MES。
 
-数据来自 TradeStation 或盈透（IBKR）。
+数据来自 [TradeStation](https://en.wikipedia.org/wiki/TradeStation)（英文）或[盈透证券](https://zh.wikipedia.org/zh-cn/盈透證券)（IBKR）。
 
 本工具不下单、不改单、不撤单。
 
@@ -14,14 +14,18 @@
 
 | 项目 | 含义 |
 |---|---|
-| delta | 一根 1 分钟 K 线里，买入量减卖出量。 |
+| delta | 一根 1 分钟 K 线里，买入[成交量](https://en.wikipedia.org/wiki/Volume_%28finance%29)（英文）减卖出成交量。 |
 | 累计 delta | 从纽约时间 09:30 起，所有 delta 之和。 |
-| 单印区 | 只被一个 30 分钟时段触及过的价格区间。它的上方和下方都有其他时段成交过。 |
+| 单印区（single prints） | 只被一个 30 分钟时段触及过的价格区间。它的上方和下方都有其他时段成交过。这种形状叫双分布（double distribution）。 |
 | 单印区回补 | 价格回到了单印区里。单印区消失。 |
 
-成交价比上一笔高，算买入。成交价比上一笔低，算卖出。成交价和上一笔相同，沿用上一笔的方向。
+本工具按 30 分钟时段搭建当天的 [Market Profile](https://en.wikipedia.org/wiki/Market_profile)（市场轮廓，英文），再从中找单印区。
+
+成交价比上一笔高，算买入。成交价比上一笔低，算卖出。成交价和上一笔相同，沿用上一笔的方向。这个方法叫 tick 规则（tick rule）。
 
 单印区出现时，本工具发一条 macOS 通知。单印区被回补时，再发一条。
+
+说明：中英文维基百科都没有「单印」「双分布」「tick 规则」的条目。背景知识请看 Market Profile 条目。
 
 说明：2025 年 2 月至 2026 年 11 月的数据中，纽约时间 11:30 前出现的单印区，有 42–44% 到收盘仍未回补。13:30 前出现的，这个比例是 70–72%。
 
@@ -33,7 +37,7 @@
 - [ ] Python 3.10 或更新版本。
 - [ ] 以下券商账户之一：
   - [ ] TradeStation，并有 API Key（client ID 和 client secret）。
-  - [ ] IBKR，已订阅 CME 期货实时行情，并已安装 TWS 或 IB Gateway。
+  - [ ] IBKR，已订阅 [CME](https://zh.wikipedia.org/zh-cn/芝加哥商品交易所集團) 期货实时行情，并已安装 TWS 或 IB Gateway。
 
 ## 4. 安装
 
