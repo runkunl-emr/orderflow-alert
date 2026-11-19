@@ -137,3 +137,24 @@ def test_discord_payload_mentions_only_the_given_user(tmp_path):
     assert p.payload("hi") == {"content": "<@42> hi", "allowed_mentions": {"users": ["42"]}}
     q = DiscordPoster("123", str(tmp_path / "plain"))
     assert q.payload("hi") == {"content": "hi", "allowed_mentions": {"parse": []}}   # no mention: nobody pinged
+
+
+def test_band_jitter_alerts_once_and_fills_only_when_price_returns(monkeypatch):
+    """Today's MES bands: the edges moved by a bucket as new lows shifted the profile, which used to alert each time."""
+    import orderflow_alert.flow_alert as fa
+
+    bands = iter([(7345.75, 7389.5), (7345.0, 7390.0), (7345.75, 7389.5), None, (7345.0, 7390.0), None])
+    monkeypatch.setattr(fa, "single_print_band", lambda bars, size: next(bands))
+    seen, logs = [], []
+    w = FlowWatcher("@MES", seen.append, logs.append)
+    lows = [7300, 7299, 7298, 7297, 7296]          # each bar makes a new low far below the band
+    for i, low in enumerate(lows):
+        feed(w, msg(19, f"10:3{i + 1}", low + 5, low))
+    feed(w, msg(19, "10:36", 7365, 7340))          # price trades back into the band: filled
+    assert seen == ["MES 10:31 出现单印区 7345.75–7389.5（双分布形态）", "MES 10:36 单印区 7345–7390 已回补"]
+    assert [e["event"] for e in logs if e["event"].startswith("band")].count("band_gone") == 1
+
+
+def test_price_keeps_quarter_points_on_five_digit_prices():
+    from orderflow_alert.flow_alert import price
+    assert [price(27353.75), price(27618.5), price(7345.0), price(7389.25)] == ["27353.75", "27618.5", "7345", "7389.25"]

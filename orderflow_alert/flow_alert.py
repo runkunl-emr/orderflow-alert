@@ -159,6 +159,15 @@ def rth_minute(end: dt.datetime) -> int | None:
     return m if e.weekday() < 5 and 0 <= m < 390 else None
 
 
+def price(x: float) -> str:
+    """A price as written on the chart: 27353.75, 7345, 7389.5. (`:g` keeps only 6 significant digits.)"""
+    return f"{x:.2f}".rstrip("0").rstrip(".")
+
+
+def overlaps(a: tuple[float, float], b: tuple[float, float]) -> bool:
+    return a[0] <= b[1] and b[0] <= a[1]
+
+
 def single_print_band(bars: list[tuple[int, float, float]], size: float) -> tuple[float, float] | None:
     """Tallest single-print band inside the profile of (minute, high, low) bars, as (low, high) prices."""
     if not bars:
@@ -193,6 +202,7 @@ class FlowWatcher:
         self.day: dt.date | None = None
         self.bars: dict[int, tuple[float, float, int]] = {}  # minute -> (high, low, delta), closed RTH bars only
         self.band: tuple[float, float] | None = None
+        self.alerted: tuple[float, float] | None = None   # the band last announced and not yet filled
         if hub:
             hub.meta(symbol, self.size)
 
@@ -206,7 +216,7 @@ class FlowWatcher:
         if not bar.closed or m in self.bars and self.day == end.astimezone(ET).date():
             return
         if self.day != end.astimezone(ET).date():
-            self.day, self.bars, self.band = end.astimezone(ET).date(), {}, None
+            self.day, self.bars, self.band, self.alerted = end.astimezone(ET).date(), {}, None, None
         delta = bar.delta
         self.bars[m] = (bar.high, bar.low, delta)
         live = bar.realtime  # backfilled bars only rebuild the state, without alerts
@@ -215,14 +225,23 @@ class FlowWatcher:
                   "cum_delta": sum(b[2] for b in self.bars.values())})
         band = single_print_band([(k, h, l) for k, (h, l, _) in self.bars.items()], self.size)
         name = self.symbol.lstrip("@")
+        # The profile's price buckets start at the day's low, so a new low shifts every bucket and the band's
+        # edges move by a fraction of a bucket. Treat a band that overlaps the one already announced as the same
+        # band (no new alert), and call it filled only when price actually trades back into it.
         if band and band != self.band:
             self.log({"event": "band", "symbol": self.symbol, "time": hhmm, "low": band[0], "high": band[1]})
-            if live and (self.band is None or band[1] - band[0] > self.band[1] - self.band[0]):
-                self.notify(f"{name} {hhmm} 出现单印区 {band[0]:g}–{band[1]:g}（双分布形态）")
-        elif self.band and not band:
-            self.log({"event": "band_filled", "symbol": self.symbol, "time": hhmm, "low": self.band[0], "high": self.band[1]})
-            if live:
-                self.notify(f"{name} {hhmm} 单印区 {self.band[0]:g}–{self.band[1]:g} 已回补")
+            if live and not (self.alerted and overlaps(band, self.alerted)):
+                self.notify(f"{name} {hhmm} 出现单印区 {price(band[0])}–{price(band[1])}（双分布形态）")
+        if band:
+            self.alerted = band   # backfilled bands count as announced too: no alert for an old band at start
+        elif self.band and self.alerted:
+            if overlaps((bar.low, bar.high), self.alerted):
+                self.log({"event": "band_filled", "symbol": self.symbol, "time": hhmm, "low": self.alerted[0], "high": self.alerted[1]})
+                if live:
+                    self.notify(f"{name} {hhmm} 单印区 {price(self.alerted[0])}–{price(self.alerted[1])} 已回补")
+                self.alerted = None
+            else:   # gone only because the buckets shifted; price never came back
+                self.log({"event": "band_gone", "symbol": self.symbol, "time": hhmm})
         if self.hub and band != self.band:
             self.hub.band(self.symbol, band)
         self.band = band
