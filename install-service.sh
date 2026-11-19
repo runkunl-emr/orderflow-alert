@@ -40,6 +40,8 @@ cat > "$PLIST" <<XML
 </plist>
 XML
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+# bootout returns before the old instance is gone; bootstrap fails with "Input/output error" until it is
+for _ in $(seq 1 30); do launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || break; sleep 1; done
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 echo "Installed. The tool runs in the background and starts at login."
 echo "Panel: http://127.0.0.1:8765   Log: $LOG"

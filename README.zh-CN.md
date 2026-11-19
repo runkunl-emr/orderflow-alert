@@ -131,6 +131,9 @@ MFI 用全部 K 线计算，包括盘前。所以常规时段第一根 K 线就�
 | `--no-notify` | 不发 macOS 通知，只在「终端」里输出。 | 关 |
 | `--mfi-minutes 分钟数` | 设置计算 MFI 用的 K 线周期。 | `5` |
 | `--no-mfi` | 不发 MFI 通知。 | 关 |
+| `--discord-channel 频道ID` | 每条提醒同时通过机器人发到这个 Discord 频道。 | 关 |
+| `--discord-token-file 路径` | 存机器人 token 的文件：一行 `DISCORD_BOT_TOKEN=...`，或只写 token。用 `--discord-channel` 时必须提供。 | — |
+| `--discord-mention 用户ID` | 每条提醒 @ 这个 Discord 用户。 | 不 @ |
 | `--ib-host 地址` | 设置 TWS 或 IB Gateway 的地址。 | `127.0.0.1` |
 | `--ib-port 端口` | 设置 TWS 或 IB Gateway 的端口。 | `7496` |
 | `--ib-client-id 编号` | 设置 API 客户端编号。同一个 TWS 上，每个程序的编号必须不同。 | `17` |
@@ -146,6 +149,9 @@ IBKR 端口：
 
 - 监看 NQ 和 ES：`.venv/bin/orderflow-alert --symbol @NQ --symbol @ES`
 - 用 IB Gateway 连模拟账户：`.venv/bin/orderflow-alert --ib-port 4002`
+- 同时发到 Discord 并 @ 一个用户：`.venv/bin/orderflow-alert --discord-channel 123 --discord-token-file ~/bot-token --discord-mention 456`
+
+说明：机器人必须在那个服务器里，并且有在该频道发消息的权限。要拿频道 ID 或用户 ID：在 Discord 里打开「开发者模式」，然后右键频道或用户，选 **复制 ID**。
 
 ## 7. 故障排查
 

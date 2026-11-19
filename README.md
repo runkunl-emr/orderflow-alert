@@ -131,6 +131,9 @@ To remove the background service, type `./install-service.sh uninstall` and push
 | `--no-notify` | Stops macOS notifications. The tool only writes lines in Terminal. | Off |
 | `--mfi-minutes N` | Sets the bar size for MFI, in minutes. | `5` |
 | `--no-mfi` | Stops the MFI notifications. | Off |
+| `--discord-channel ID` | Also posts each alert to this Discord channel, through a bot. | Off |
+| `--discord-token-file PATH` | File with the bot token: a line `DISCORD_BOT_TOKEN=...`, or the token alone. Required with `--discord-channel`. | — |
+| `--discord-mention USER_ID` | Mentions this Discord user in each alert. | None |
 | `--ib-host HOST` | Sets the address of TWS or IB Gateway. | `127.0.0.1` |
 | `--ib-port N` | Sets the port of TWS or IB Gateway. | `7496` |
 | `--ib-client-id N` | Sets the API client ID. Use a number that no other program uses on the same TWS. | `17` |
@@ -146,6 +149,9 @@ Examples:
 
 - Monitor NQ and ES: `.venv/bin/orderflow-alert --symbol @NQ --symbol @ES`
 - Use IB Gateway with a paper account: `.venv/bin/orderflow-alert --ib-port 4002`
+- Also post to Discord and mention a user: `.venv/bin/orderflow-alert --discord-channel 123 --discord-token-file ~/bot-token --discord-mention 456`
+
+NOTE: The bot must be a member of the server, and it must have permission to send messages in the channel. To get a channel ID or user ID, turn on Developer Mode in Discord, then right-click the channel or user and select **Copy ID**.
 
 ## 7. Troubleshooting
 

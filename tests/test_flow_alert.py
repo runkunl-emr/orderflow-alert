@@ -124,3 +124,16 @@ def test_pick_source(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "ib_async", None)            # simulate ib_async not installed
     with pytest.raises(SystemExit, match="No data source set up"):
         pick_source("auto")
+
+
+def test_discord_payload_mentions_only_the_given_user(tmp_path):
+    from orderflow_alert.discord import DiscordPoster, read_token
+
+    (tmp_path / "env").write_text("OTHER=1\nDISCORD_BOT_TOKEN='abc'\n")
+    (tmp_path / "plain").write_text("xyz\n")
+    assert read_token(str(tmp_path / "env")) == "abc" and read_token(str(tmp_path / "plain")) == "xyz"
+    p = DiscordPoster("123", str(tmp_path / "env"), mention="42")
+    assert p.url.endswith("/channels/123/messages")
+    assert p.payload("hi") == {"content": "<@42> hi", "allowed_mentions": {"users": ["42"]}}
+    q = DiscordPoster("123", str(tmp_path / "plain"))
+    assert q.payload("hi") == {"content": "hi", "allowed_mentions": {"parse": []}}   # no mention: nobody pinged

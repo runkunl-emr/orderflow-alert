@@ -259,6 +259,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-browser", action="store_true", help="serve the panel without opening it in the browser")
     parser.add_argument("--mfi-minutes", type=int, default=5, metavar="N", help="bar size for the MFI(14) 20/80 alerts, in minutes (default 5)")
     parser.add_argument("--no-mfi", action="store_true", help="turn off the MFI alerts")
+    dc = parser.add_argument_group("discord", "also post every alert to a Discord channel through a bot")
+    dc.add_argument("--discord-channel", metavar="ID", help="channel ID to post alerts to")
+    dc.add_argument("--discord-token-file", metavar="PATH", help="file with the bot token (DISCORD_BOT_TOKEN=... or the token alone)")
+    dc.add_argument("--discord-mention", metavar="USER_ID", default="", help="user ID to mention in each alert")
     parser.add_argument("--source", choices=["auto", "tradestation", "ibkr"], default="auto",
                         help="where the bars come from. auto (default): TradeStation if logged in, else IBKR if ib_async is installed")
     ib = parser.add_argument_group("ibkr", "connection to a running TWS or IB Gateway (API enabled)")
@@ -301,10 +305,19 @@ def main(argv: list[str] | None = None) -> int:
         print(exc, file=sys.stderr)
         return 78
     hub = Hub() if args.port else None
+    discord = None
+    if args.discord_channel:
+        if not args.discord_token_file:
+            print("--discord-channel needs --discord-token-file", file=sys.stderr)
+            return 64
+        from .discord import DiscordPoster
+        discord = DiscordPoster(args.discord_channel, args.discord_token_file, args.discord_mention)
 
     def notify(text: str) -> None:
         if not args.no_notify:
             mac_notify(text)
+        if discord:
+            discord.post(text)
         if hub:
             hub.alert(text)
 
