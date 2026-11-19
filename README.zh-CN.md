@@ -107,6 +107,19 @@ MFI 用全部 K 线计算，包括盘前。所以常规时段第一根 K 线就�
 
 停止本工具：按 Control-C。
 
+### 5.1 后台运行
+
+1. 先完成安装（第 4 节）。
+2. 输入 `./install-service.sh`，按回车。
+
+   结果：本工具在后台运行。开机自动启动，停了会自动重启。
+
+   结果：面板地址是 `http://127.0.0.1:8765`。日志在 `~/Library/Logs/orderflow-alert.log`。
+
+要用其他参数，加在命令后面。例如：`./install-service.sh --symbol @NQ --symbol @ES`。
+
+取消后台运行：输入 `./install-service.sh uninstall`，按回车。
+
 ## 6. 参数
 
 | 参数 | 作用 | 默认值 |

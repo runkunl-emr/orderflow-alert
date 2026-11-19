@@ -107,6 +107,19 @@ To use IBKR when you also have a TradeStation login, add `--source ibkr`.
 
 To stop the tool, push Control-C.
 
+### 5.1 Run in the background
+
+1. Do the installation (section 4).
+2. Type `./install-service.sh` and push Return.
+
+   Result: The tool runs in the background. It starts at login, and it starts again if it stops.
+
+   Result: The panel is at `http://127.0.0.1:8765`. The log is at `~/Library/Logs/orderflow-alert.log`.
+
+To use other options, add them after the command. Example: `./install-service.sh --symbol @NQ --symbol @ES`.
+
+To remove the background service, type `./install-service.sh uninstall` and push Return.
+
 ## 6. Options
 
 | Option | Function | Default |
