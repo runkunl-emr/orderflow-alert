@@ -18,12 +18,22 @@
 | 累计 delta | 从纽约时间 09:30 起，所有 delta 之和。 |
 | 单印区（single prints） | 只被一个 30 分钟时段触及过的价格区间。它的上方和下方都有其他时段成交过。这种形状叫双分布（double distribution）。 |
 | 单印区回补 | 价格回到了单印区里。单印区消失。 |
+| MFI | [资金流量指标](https://en.wikipedia.org/wiki/Money_flow_index)（Money Flow Index，英文），5 分钟 K 线、14 根。数值 0 到 100。 |
 
 本工具按 30 分钟时段搭建当天的 [Market Profile](https://en.wikipedia.org/wiki/Market_profile)（市场轮廓，英文），再从中找单印区。
 
 成交价比上一笔高，算买入。成交价比上一笔低，算卖出。成交价和上一笔相同，沿用上一笔的方向。这个方法叫 tick 规则（tick rule）。
 
 单印区出现时，本工具发一条 macOS 通知。单印区被回补时，再发一条。
+
+MFI 出现以下情况时，本工具也发 macOS 通知：
+
+- 跌破 20，
+- 回升到 20 或以上，
+- 涨破 80，
+- 回落到 80 或以下。
+
+MFI 用全部 K 线计算，包括盘前。所以常规时段第一根 K 线就有 MFI 值，并且和看盘软件上的 MFI 一致。MFI 通知只在纽约时间 09:30–16:00 收盘的 K 线上发。
 
 说明：中英文维基百科都没有「单印」「双分布」「tick 规则」的条目。背景知识请看 Market Profile 条目。
 
@@ -106,6 +116,8 @@
 | `--port 端口` | 设置面板端口。`0` 表示不开面板。 | `8765` |
 | `--no-browser` | 开面板，但不自动打开浏览器。 | 关 |
 | `--no-notify` | 不发 macOS 通知，只在「终端」里输出。 | 关 |
+| `--mfi-minutes 分钟数` | 设置计算 MFI 用的 K 线周期。 | `5` |
+| `--no-mfi` | 不发 MFI 通知。 | 关 |
 | `--ib-host 地址` | 设置 TWS 或 IB Gateway 的地址。 | `127.0.0.1` |
 | `--ib-port 端口` | 设置 TWS 或 IB Gateway 的端口。 | `7496` |
 | `--ib-client-id 编号` | 设置 API 客户端编号。同一个 TWS 上，每个程序的编号必须不同。 | `17` |

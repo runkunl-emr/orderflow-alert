@@ -100,7 +100,8 @@ def to_bar(msg: dict) -> Bar | None:
     return Bar(end=dt.datetime.fromisoformat(msg["TimeStamp"].replace("Z", "+00:00")),
                open=float(msg["Open"]), high=float(msg["High"]), low=float(msg["Low"]), close=float(msg["Close"]),
                buy_volume=int(msg.get("UpVolume") or 0), sell_volume=int(msg.get("DownVolume") or 0),
-               closed=msg.get("BarStatus") == "Closed", realtime=bool(msg.get("IsRealtime")))
+               closed=msg.get("BarStatus") == "Closed", realtime=bool(msg.get("IsRealtime")),
+               volume=float(msg.get("TotalVolume") or 0))
 
 
 class TradeStationSource:
@@ -115,7 +116,7 @@ class TradeStationSource:
 
     def stream(self, symbol: str, since: dt.datetime) -> Iterator[Bar]:
         minutes = int((dt.datetime.now(dt.timezone.utc) - since).total_seconds() // 60)
-        for msg in self.client.stream_bars(symbol, min(max(minutes, 0) + 5, 400)):
+        for msg in self.client.stream_bars(symbol, min(max(minutes, 0) + 5, 1000)):
             if "Error" in msg:
                 raise TradeStationError(f"bar stream ended: {msg}")
             bar = to_bar(msg)

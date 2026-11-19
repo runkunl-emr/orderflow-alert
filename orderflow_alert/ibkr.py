@@ -37,10 +37,11 @@ class TickBars:
         self.start: dt.datetime | None = None
         self.o = self.h = self.l = self.c = 0.0
         self.buy = self.sell = 0
+        self.volume = 0.0
 
     def _bar(self, closed: bool) -> Bar:
         return Bar(end=self.start + dt.timedelta(minutes=1), open=self.o, high=self.h, low=self.l, close=self.c,
-                   buy_volume=self.buy, sell_volume=self.sell, closed=closed, realtime=True)
+                   buy_volume=self.buy, sell_volume=self.sell, closed=closed, realtime=True, volume=self.volume)
 
     def trade(self, when: dt.datetime, price: float, size: float) -> list[Bar]:
         """Add one trade. Returns the bar it closed (if this trade starts a new minute) and the forming bar."""
@@ -53,8 +54,9 @@ class TickBars:
             self.last_side = 1 if price > self.last_price else -1
         self.last_price = price
         if self.start is None:
-            self.start, self.o, self.h, self.l, self.buy, self.sell = minute, price, price, price, 0, 0
+            self.start, self.o, self.h, self.l, self.buy, self.sell, self.volume = minute, price, price, price, 0, 0, 0.0
         self.h, self.l, self.c = max(self.h, price), min(self.l, price), price
+        self.volume += size   # every trade counts toward total volume, classified or not
         if self.last_side > 0:
             self.buy += int(size)
         elif self.last_side < 0:
@@ -116,7 +118,7 @@ class IBKRSource:
         seconds = int((dt.datetime.now(dt.timezone.utc) - since).total_seconds())
         if seconds > 60:
             history = await ib.reqHistoricalDataAsync(front, endDateTime="", durationStr=f"{min(seconds + 60, 86400)} S",
-                                                      barSizeSetting="1 min", whatToShow="TRADES", useRTH=True, formatDate=2)
+                                                      barSizeSetting="1 min", whatToShow="TRADES", useRTH=False, formatDate=2)
 
         def on_update(ticker):
             for t in ticker.tickByTicks:
@@ -155,7 +157,7 @@ class IBKRSource:
                 end = start + dt.timedelta(minutes=1)
                 if end <= now:   # skip the still-open last bar; the trade feed rebuilds it
                     yield Bar(end=end, open=b.open, high=b.high, low=b.low, close=b.close,
-                              buy_volume=0, sell_volume=0, closed=True, realtime=False)
+                              buy_volume=0, sell_volume=0, closed=True, realtime=False, volume=float(b.volume or 0))
             bars, sent = TickBars(), 0.0
             while True:
                 try:

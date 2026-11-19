@@ -18,12 +18,22 @@ It does not place, change or cancel orders.
 | Cumulative delta | The sum of all deltas since 09:30 New York time. |
 | Single-print band (*single prints*) | A price area that only one 30-minute period touched. Other periods traded above it and below it. This shape is a *double distribution*. |
 | Band filled | Price came back into the band. The band is gone. |
+| MFI | The [Money Flow Index](https://en.wikipedia.org/wiki/Money_flow_index), 14 bars, on 5-minute bars. A value from 0 to 100. |
 
 The tool builds a [Market Profile](https://en.wikipedia.org/wiki/Market_profile) of the day in 30-minute periods. It finds the single-print bands in this profile.
 
 The tool counts a trade at a higher price than the previous trade as a buy. It counts a trade at a lower price as a sell. A trade at the same price gets the side of the previous trade. This method is the *tick rule*.
 
 The tool sends a macOS notification when a band starts. It sends one more notification when the band is filled.
+
+The tool also sends a macOS notification when MFI:
+
+- goes below 20,
+- comes back to 20 or more,
+- goes above 80,
+- comes back to 80 or less.
+
+The tool calculates MFI on all bars, pre-market included. Thus, MFI has a value at the first bar of the session, and it agrees with the MFI on charting platforms. The tool sends MFI notifications only for bars that close between 09:30 and 16:00 New York time.
 
 NOTE: Wikipedia has no article on single prints, double distribution or the tick rule. For the background, refer to the Market Profile article.
 
@@ -106,6 +116,8 @@ To stop the tool, push Control-C.
 | `--port N` | Sets the panel port. `0` turns the panel off. | `8765` |
 | `--no-browser` | Starts the panel but does not open the browser. | Off |
 | `--no-notify` | Stops macOS notifications. The tool only writes lines in Terminal. | Off |
+| `--mfi-minutes N` | Sets the bar size for MFI, in minutes. | `5` |
+| `--no-mfi` | Stops the MFI notifications. | Off |
 | `--ib-host HOST` | Sets the address of TWS or IB Gateway. | `127.0.0.1` |
 | `--ib-port N` | Sets the port of TWS or IB Gateway. | `7496` |
 | `--ib-client-id N` | Sets the API client ID. Use a number that no other program uses on the same TWS. | `17` |

@@ -81,7 +81,7 @@ class FakeSource(IBKRSource):
 
 
 def hist(start):
-    return types.SimpleNamespace(date=start, open=1.0, high=2.0, low=0.5, close=1.5)
+    return types.SimpleNamespace(date=start, open=1.0, high=2.0, low=0.5, close=1.5, volume=123.0)
 
 
 def test_stream_backfills_then_goes_live_and_raises_on_error():
@@ -97,5 +97,6 @@ def test_stream_backfills_then_goes_live_and_raises_on_error():
     backfill = [b for b in got if not b.realtime]
     assert len(backfill) == 2                                          # the still-open history bar is skipped
     assert all(b.closed and b.delta == 0 for b in backfill)            # history has no buy/sell split
+    assert all(b.volume == 123.0 for b in backfill)                    # but it does carry total volume (MFI)
     assert got[-1].realtime and not got[-1].closed and got[-1].close in (10.0, 10.25)
     assert src.closed                                                  # subscription cleaned up on the way out

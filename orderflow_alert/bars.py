@@ -21,6 +21,7 @@ class Bar:
     sell_volume: int   # estimated aggressive selling: volume traded on down-ticks
     closed: bool       # False while the bar is still forming
     realtime: bool     # False for backfilled history: it rebuilds the state but never alerts
+    volume: float = 0  # total volume of the bar (all trades); used by MFI
 
     @property
     def delta(self) -> int:

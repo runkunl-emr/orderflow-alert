@@ -30,6 +30,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .bars import Bar, BarSource
+from .mfi import MfiWatcher
 
 ET = ZoneInfo("America/New_York")
 BIN = {"NQ": 5.0, "ES": 1.25}  # price bucket for the profile, in points
@@ -226,14 +227,18 @@ class FlowWatcher:
             self.hub.band(self.symbol, band)
         self.band = band
 
-    def run(self, source: BarSource, stop: threading.Event) -> None:
-        """Follow the source's bars, reconnecting when they stop; each connection backfills today's RTH bars."""
+    def run(self, source: BarSource, stop: threading.Event, listeners=()) -> None:
+        """Follow the source's bars, reconnecting when they stop. Each connection backfills from 08:00 ET:
+        the profile uses only RTH bars, but MFI needs pre-market bars to have a value at the open.
+        `listeners` get every bar too (pre-market included)."""
         while not stop.is_set():
             try:
-                since = dt.datetime.now(ET).replace(hour=9, minute=30, second=0, microsecond=0)
+                since = dt.datetime.now(ET).replace(hour=8, minute=0, second=0, microsecond=0)
                 for bar in source.stream(self.symbol, since):
                     if stop.is_set():
                         return
+                    for listen in listeners:
+                        listen(bar)
                     self.on_bar(bar)
                 self.log({"event": "stream_end", "symbol": self.symbol})
             except Exception as exc:
@@ -252,6 +257,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-notify", action="store_true", help="only print JSON lines, no macOS notifications")
     parser.add_argument("--port", type=int, default=8765, help="local panel port (default 8765); 0 = no panel")
     parser.add_argument("--no-browser", action="store_true", help="serve the panel without opening it in the browser")
+    parser.add_argument("--mfi-minutes", type=int, default=5, metavar="N", help="bar size for the MFI(14) 20/80 alerts, in minutes (default 5)")
+    parser.add_argument("--no-mfi", action="store_true", help="turn off the MFI alerts")
     parser.add_argument("--source", choices=["auto", "tradestation", "ibkr"], default="auto",
                         help="where the bars come from. auto (default): TradeStation if logged in, else IBKR if ib_async is installed")
     ib = parser.add_argument_group("ibkr", "connection to a running TWS or IB Gateway (API enabled)")
@@ -305,7 +312,8 @@ def main(argv: list[str] | None = None) -> int:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
     for symbol in args.symbol or ["@MNQ", "@MES"]:
-        threading.Thread(target=FlowWatcher(symbol, notify, hub=hub).run, args=(source, stop), daemon=True).start()
+        listeners = [] if args.no_mfi else [MfiWatcher(symbol, notify, minutes=args.mfi_minutes).on_bar]
+        threading.Thread(target=FlowWatcher(symbol, notify, hub=hub).run, args=(source, stop, listeners), daemon=True).start()
     print(f"flow alert started: {source.name} ({why})", file=sys.stderr, flush=True)
     if hub:
         serve_panel(hub, args.port)
